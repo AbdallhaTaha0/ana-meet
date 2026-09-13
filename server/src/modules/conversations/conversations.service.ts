@@ -26,6 +26,7 @@ export interface ConversationDetail {
   id: string;
   type: 'DIRECT' | 'GROUP';
   title: string | null;
+  peer: UserCard | null;
   memberCount: number;
   myRole: ParticipantRole;
   participants: ParticipantView[];
@@ -58,11 +59,17 @@ function toDetail(
   conversation: Conversation,
   participants: ConversationParticipant[],
   myRole: ParticipantRole,
+  viewerId: string,
 ): ConversationDetail {
+  const peer = conversation.type === 'DIRECT'
+    ? participants.find((participant) => participant.userId !== viewerId)
+    : null;
+  const peerUser = peer ? (peer as unknown as { user?: User | null }).user ?? null : null;
   return {
     id: conversation.id,
     type: conversation.type,
     title: conversation.title,
+    peer: peerUser ? toUserCard(peerUser) : null,
     memberCount: participants.length,
     myRole,
     participants: participants.map(toParticipantView),
@@ -183,7 +190,7 @@ export async function createDirectConversation(
             const participants = await loadParticipants(conversation.id, tx);
             const myRole =
               participants.find((p) => p.userId === creatorId)?.role ?? ('MEMBER' as ParticipantRole);
-            return { conversation: toDetail(conversation, participants, myRole), created: false };
+            return { conversation: toDetail(conversation, participants, myRole, creatorId), created: false };
           }
         }
       }
@@ -201,7 +208,7 @@ export async function createDirectConversation(
       { transaction: tx },
     );
     const participants = await loadParticipants(conversation.id, tx);
-    return { conversation: toDetail(conversation, participants, 'MEMBER'), created: true };
+    return { conversation: toDetail(conversation, participants, 'MEMBER', creatorId), created: true };
   });
 }
 
@@ -241,7 +248,7 @@ export async function createGroupConversation(
       { transaction: tx },
     );
     const participants = await loadParticipants(conversation.id, tx);
-    return { conversation: toDetail(conversation, participants, 'OWNER'), created: true };
+    return { conversation: toDetail(conversation, participants, 'OWNER', creatorId), created: true };
   });
 }
 
@@ -309,7 +316,7 @@ export async function getConversationDetail(
 ): Promise<ConversationDetail> {
   const { conversation, membership } = await requireMembership(userId, conversationId);
   const participants = await loadParticipants(conversation.id);
-  return toDetail(conversation, participants, membership.role);
+  return toDetail(conversation, participants, membership.role, userId);
 }
 
 // --- Membership management (groups only) ---
@@ -417,7 +424,7 @@ export async function renameGroup(
   conversation.title = title;
   await conversation.save();
   const participants = await loadParticipants(conversation.id);
-  return toDetail(conversation, participants, membership.role);
+  return toDetail(conversation, participants, membership.role, requesterId);
 }
 
 export async function transferOwnership(
@@ -432,7 +439,7 @@ export async function transferOwnership(
     if (membership.role !== 'OWNER') throw Errors.forbidden('Only the owner can transfer ownership');
     if (targetId === requesterId) {
       const participants = await loadParticipants(conversation.id, tx);
-      return toDetail(conversation, participants, membership.role);
+      return toDetail(conversation, participants, membership.role, requesterId);
     }
     const target = await ConversationParticipant.findOne({
       where: { conversationId, userId: targetId },
@@ -445,6 +452,6 @@ export async function transferOwnership(
     await target.save({ transaction: tx });
     await membership.save({ transaction: tx });
     const participants = await loadParticipants(conversation.id, tx);
-    return toDetail(conversation, participants, 'ADMIN');
+    return toDetail(conversation, participants, 'ADMIN', requesterId);
   });
 }

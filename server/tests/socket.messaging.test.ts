@@ -138,6 +138,24 @@ describe.skipIf(!shouldRun)('socket messaging', () => {
     }
   });
 
+  it('broadcasts REST messages to the other member without a reload', async () => {
+    const bob = await connect(tokens.bob);
+    try {
+      const incoming = waitFor(bob, 'message:new');
+      const sent = await request(app)
+        .post(`/api/v1/conversations/${directId}/messages`)
+        .set('Cookie', `am_access=${tokens.alice}`)
+        .set(ajax)
+        .send({ type: 'TEXT', content: 'REST hi', clientMessageId: randomUUID() });
+      expect(sent.status).toBe(201);
+      const delivered = (await incoming) as { message: { id: string; content: string } };
+      expect(delivered.message.id).toBe(sent.body.message.id);
+      expect(delivered.message.content).toBe('REST hi');
+    } finally {
+      bob.disconnect();
+    }
+  });
+
   it('dedupes socket retries and rejects bad payloads + outsiders', async () => {
     const alice = await connect(tokens.alice);
     const carol = await connect(tokens.carol);

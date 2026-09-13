@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { asyncHandler } from '../../common/asyncHandler';
 import { Errors } from '../../common/errors';
+import { publishConversationEvent } from '../../realtime/publish';
 import {
   advanceMessageStatus,
   deleteMessage,
@@ -18,6 +19,7 @@ export const send = asyncHandler(async (req: Request, res: Response) => {
   const { userId } = auth(req);
   const params = req.params as unknown as { id: string };
   const { message, created } = await sendMessage(userId, params.id, req.body);
+  if (created) await publishConversationEvent(params.id, 'message:new', { message });
   res.status(created ? 201 : 200).json({ message });
 });
 
@@ -33,6 +35,7 @@ export const edit = asyncHandler(async (req: Request, res: Response) => {
   const { userId } = auth(req);
   const params = req.params as unknown as { id: string; messageId: string };
   const message = await editMessage(userId, params.id, params.messageId, req.body.content as string);
+  await publishConversationEvent(params.id, 'message:updated', { message });
   res.status(200).json({ message });
 });
 
@@ -40,6 +43,10 @@ export const remove = asyncHandler(async (req: Request, res: Response) => {
   const { userId, role } = auth(req);
   const params = req.params as unknown as { id: string; messageId: string };
   await deleteMessage(userId, role, params.id, params.messageId);
+  await publishConversationEvent(params.id, 'message:deleted', {
+    conversationId: params.id,
+    messageId: params.messageId,
+  });
   res.status(204).send();
 });
 
@@ -47,5 +54,10 @@ export const setStatus = asyncHandler(async (req: Request, res: Response) => {
   const { userId } = auth(req);
   const params = req.params as unknown as { id: string; messageId: string };
   const message = await advanceMessageStatus(userId, params.id, params.messageId, req.body.status);
+  await publishConversationEvent(params.id, 'message:status', {
+    conversationId: params.id,
+    messageId: message.id,
+    status: message.status,
+  });
   res.status(200).json({ message });
 });

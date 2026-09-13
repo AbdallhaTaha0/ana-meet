@@ -62,6 +62,7 @@ describe.skipIf(!shouldRun)('conversations', () => {
       expect(first.status).toBe(201);
       expect(first.body.conversation.type).toBe('DIRECT');
       expect(first.body.conversation.memberCount).toBe(2);
+      expect(first.body.conversation.peer.id).toBe(ids.bob);
       directId = first.body.conversation.id as string;
 
       // Retry from the other side returns the same conversation.
@@ -70,6 +71,9 @@ describe.skipIf(!shouldRun)('conversations', () => {
       });
       expect(second.status).toBe(200);
       expect(second.body.conversation.id).toBe(directId);
+      expect(second.body.conversation.peer.id).toBe(ids.alice);
+      const detail = await agents.alice.get(`/api/v1/conversations/${directId}`);
+      expect(detail.body.conversation.peer.id).toBe(ids.bob);
     });
 
     it('serializes concurrent pair creates into a single conversation', async () => {
