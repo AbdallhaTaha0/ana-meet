@@ -25,7 +25,7 @@ import { usersRoutes } from './modules/users/users.routes';
 export function createApp(): express.Express {
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 1);
+  app.set('trust proxy', config.trustProxyHops);
 
   app.use(helmet());
   app.use(

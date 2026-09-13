@@ -1,8 +1,10 @@
 node_modules/
 dist/
+*.tsbuildinfo
 .env
 *.log
 coverage/
 uploads/
+!server/src/modules/uploads/
 AGENTS.md
 RULES.md

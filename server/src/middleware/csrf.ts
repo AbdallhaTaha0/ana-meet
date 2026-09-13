@@ -23,20 +23,23 @@ export function csrfProtection(req: Request, _res: Response, next: NextFunction)
   const trusted = (value: string | undefined): boolean => {
     if (!value) return false;
     try {
-      const url = value.startsWith('http') ? new URL(value) : new URL(value, 'http://placeholder');
-      const originOf = value.startsWith('http') ? url.origin : null;
-      if (originOf) return config.clientOrigins.includes(originOf);
-      return config.clientOrigins.some((o) => o.includes(url.hostname ?? ''));
+      return config.clientOrigins.includes(new URL(value).origin);
     } catch {
       return false;
     }
   };
 
-  if (typeof requestedWith === 'string' && requestedWith.length > 0) {
-    next();
+  // A present Origin/Referer must match exactly; a custom header alone is
+  // acceptable for non-browser clients that send neither header.
+  if (origin && !trusted(origin)) {
+    next(Errors.forbidden('CSRF validation failed'));
     return;
   }
-  if (trusted(origin) || trusted(referer)) {
+  if (!origin && referer && !trusted(referer)) {
+    next(Errors.forbidden('CSRF validation failed'));
+    return;
+  }
+  if (trusted(origin) || trusted(referer) || requestedWith === 'XMLHttpRequest') {
     next();
     return;
   }

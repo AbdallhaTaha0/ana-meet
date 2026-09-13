@@ -9,6 +9,7 @@ import {
   type UserCard,
 } from '../blocks/blocks.service';
 import type { CreateStoryInput } from './stories.schemas';
+import { assertOwnUploadReference } from '../uploads/uploads.access';
 
 // Server-fixed lifetime: clients cannot mint immortal (or instantly-dead)
 // stories, and expiry semantics stay uniform.
@@ -48,6 +49,9 @@ const ownerInclude = {
 };
 
 export async function createStory(ownerId: string, input: CreateStoryInput): Promise<StoryView> {
+  if (input.type !== 'TEXT') {
+    await assertOwnUploadReference(ownerId, input.mediaUrl, input.mimeType, input.sizeBytes);
+  }
   const created = await Story.create({
     ownerId,
     type: input.type,

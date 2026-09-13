@@ -7,6 +7,8 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   CLIENT_ORIGIN: z.string().default('http://localhost:3000'),
+  PUBLIC_ORIGIN: z.string().url().optional(),
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
 
   POSTGRES_USER: z.string().default('anameet'),
   POSTGRES_PASSWORD: z.string().default('anameet_dev_password'),
@@ -34,7 +36,7 @@ const envSchema = z.object({
   COOKIE_SECURE: z
     .string()
     .optional()
-    .transform((v) => v === 'true'),
+    .transform((v) => v === undefined ? undefined : v === 'true'),
   COOKIE_SAMESITE: z.enum(['lax', 'strict', 'none']).default('lax'),
 
   RATE_LIMIT_AUTH_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
@@ -59,6 +61,9 @@ if (!parsed.success) {
 
 const raw = parsed.data;
 const isProduction = raw.NODE_ENV === 'production';
+if (isProduction && (!raw.PUBLIC_ORIGIN?.startsWith('https://') || raw.COOKIE_SECURE === false)) {
+  throw new Error('Production requires an HTTPS PUBLIC_ORIGIN and secure cookies');
+}
 
 const databaseUrl =
   raw.DATABASE_URL && raw.DATABASE_URL.length > 0
@@ -69,11 +74,13 @@ const databaseUrl =
 
 export const config = {
   port: raw.PORT,
+  trustProxyHops: raw.TRUST_PROXY_HOPS,
   nodeEnv: raw.NODE_ENV,
   isProduction,
   clientOrigins: raw.CLIENT_ORIGIN.split(',')
     .map((o) => o.trim())
     .filter(Boolean),
+  publicOrigin: raw.PUBLIC_ORIGIN || `http://localhost:${raw.PORT}`,
   databaseUrl,
   dbPool: {
     max: raw.DB_POOL_MAX,

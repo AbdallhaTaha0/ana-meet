@@ -1,6 +1,6 @@
 import { createReadStream, promises as fs } from 'fs';
 import { tmpdir } from 'os';
-import { dirname, join } from 'path';
+import { dirname, join, resolve, sep } from 'path';
 import type { StorageBackend } from './types';
 
 // Local filesystem backend for development/small deployments.
@@ -22,7 +22,10 @@ export class LocalStorageBackend implements StorageBackend {
   }
 
   private abs(key: string): string {
-    return join(this.rootDir, 'files', key);
+    const filesRoot = resolve(this.rootDir, 'files');
+    const target = resolve(filesRoot, key);
+    if (!target.startsWith(filesRoot + sep)) throw new Error('Invalid storage key');
+    return target;
   }
 
   async saveFile(tmpPath: string, key: string): Promise<void> {

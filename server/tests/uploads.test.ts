@@ -21,6 +21,7 @@ describe.skipIf(!shouldRun)('uploads', () => {
   const agents = {
     alice: request.agent(app),
     bob: request.agent(app),
+    carol: request.agent(app),
   };
   type Agent = (typeof agents)['alice'];
   const ids: Record<string, string> = {};
@@ -48,6 +49,7 @@ describe.skipIf(!shouldRun)('uploads', () => {
 
     await register(agents.alice, 'alice');
     await register(agents.bob, 'bob');
+    await register(agents.carol, 'carol');
     await User.update({ role: 'ADMIN' }, { where: { id: ids.alice } });
   });
 
@@ -69,6 +71,7 @@ describe.skipIf(!shouldRun)('uploads', () => {
     // …but is preserved (sanitized) as metadata.
     expect(res.body.media.fileName).toBe('evil.png.exe');
     expect(res.body.media.url).toMatch(/^https?:\/\//);
+    expect(new URL(res.body.media.url as string).origin).toBe(config.publicOrigin);
   });
 
   it('sniffs spoofed content instead of trusting extensions', async () => {
@@ -102,7 +105,7 @@ describe.skipIf(!shouldRun)('uploads', () => {
     ).toBe(400);
   });
 
-  it('serves bytes with safe headers to authenticated users only', async () => {
+  it('serves bytes only to the owner until the upload is shared in a conversation', async () => {
     const up = await agents.bob.post('/api/v1/uploads').set(ajax).attach('file', PNG_1X1, 'a.png');
     const key = up.body.media.key as string;
     const urlPath = `/api/v1/uploads/${key}`;
@@ -114,6 +117,7 @@ describe.skipIf(!shouldRun)('uploads', () => {
     expect(Buffer.compare(served.body as Buffer, PNG_1X1)).toBe(0);
 
     expect((await request(app).get(urlPath)).status).toBe(401);
+    expect((await agents.carol.get(urlPath)).status).toBe(404);
     expect((await agents.bob.get('/api/v1/uploads/2026/01/doesnotexist1234567890123456.png')).status).toBe(
       404,
     );
@@ -127,14 +131,7 @@ describe.skipIf(!shouldRun)('uploads', () => {
     const key = mine.body.items[0].key as string;
 
     // Non-owner cannot delete.
-    const carol = request.agent(app);
-    await carol.post('/api/v1/auth/register').set(ajax).send({
-      username: 'carol',
-      email: 'carol@example.com',
-      password: 's3cure-passphrase',
-      displayName: 'carol',
-    });
-    expect((await carol.delete(`/api/v1/uploads/${key}`).set(ajax)).status).toBe(403);
+    expect((await agents.carol.delete(`/api/v1/uploads/${key}`).set(ajax)).status).toBe(403);
 
     // Admin can.
     expect((await agents.alice.delete(`/api/v1/uploads/${key}`).set(ajax)).status).toBe(204);
@@ -160,7 +157,8 @@ describe.skipIf(!shouldRun)('uploads', () => {
     expect(sent.status).toBe(201);
     expect(sent.body.message.media.url).toBe(up.body.media.url);
 
-    // Another user's uploads are still visible to the peer (documented V1 scope).
+    // The peer gains read access only through this shared conversation.
+    expect((await agents.bob.get(`/api/v1/uploads/${up.body.media.key}`)).status).toBe(200);
     const history = await agents.bob.get(`/api/v1/conversations/${dm.body.conversation.id}/messages`);
     expect(history.body.items[0].media.mimeType).toBe('image/png');
   });

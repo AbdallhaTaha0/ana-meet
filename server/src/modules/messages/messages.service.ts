@@ -4,6 +4,7 @@ import { decodeCursor, encodeCursor } from '../../common/cursor';
 import { Conversation, ConversationParticipant, Message, User, type MessageStatus } from '../../db/models';
 import { requireMembership } from '../conversations/conversations.service';
 import { assertNotBlocked, toUserCard, type UserCard } from '../blocks/blocks.service';
+import { assertOwnUploadReference } from '../uploads/uploads.access';
 import {
   createMessageNotifications,
   logNotificationFailure,
@@ -132,6 +133,9 @@ export async function sendMessage(
     if (parent.conversationId !== conversationId) {
       throw Errors.badRequest('Replies must target a message in the same conversation');
     }
+  }
+  if (input.type !== 'TEXT') {
+    await assertOwnUploadReference(senderId, input.mediaUrl, input.mimeType, input.sizeBytes);
   }
 
   // Idempotency: a retried send carries the same clientMessageId and

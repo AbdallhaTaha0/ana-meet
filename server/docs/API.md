@@ -336,9 +336,10 @@ or story payload. Media URLs are absolute (built from the request host).
 - **Storage seam** (`src/storage`): business logic uses `StorageBackend`
   (save/delete/read); local FS today, object storage later with no caller
   changes. `UPLOAD_DIR` env (absolute in production).
-- **Serving is authenticated** with `nosniff` + `sandbox` headers;
-  FILE kinds download as attachments. Keys are unguessable
-  (128-bit); per-conversation media ACLs are documented future work.
+- **Serving is authenticated and scoped** with `nosniff` + `sandbox`
+  headers; FILE kinds download as attachments. The owner, platform admins,
+  and members of a conversation containing the asset can read it. A local
+  upload can only be attached by its owner. Keys are unguessable (128-bit).
 - **Lifecycle**: owner or ADMIN deletes (`204`); rows are the source of
   truth, file removal is best-effort. Deleting an asset referenced by a
   message breaks that render (no reference counting in V1).

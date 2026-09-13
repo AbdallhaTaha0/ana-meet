@@ -5,8 +5,8 @@ Real-time communication platform (WhatsApp/Messenger-style core: auth, contacts,
 media uploads). Built as a **modular monolith** designed to run behind a load
 balancer with multiple Node instances.
 
-> **Status: backend complete (Phases 1–12). Frontend (`client/`) not started.**
-> The future frontend consumes the REST + Socket.IO contracts in
+> **Status: backend complete (Phases 1–12). Frontend (`client/`) implemented.**
+> The frontend consumes the REST + Socket.IO contracts in
 > [`server/docs/API.md`](server/docs/API.md).
 
 ## Stack
@@ -50,6 +50,20 @@ npm run db:migrate   # applies pending migrations to the dev database
 npm run dev          # http://localhost:4000 (auto-migrates in development)
 ```
 
+In a second terminal, start the frontend:
+
+```bash
+cd client
+npm install
+npm run dev          # http://localhost:3000
+```
+
+Vite proxies `/api` and `/socket.io` to port 4000 in development, so the
+browser uses the backend's HttpOnly auth cookies without storing tokens.
+For a separately hosted production client, set `VITE_API_URL` at build time
+to the HTTPS backend origin and configure the matching `CLIENT_ORIGIN` and
+cookie settings on the server.
+
 Sanity check: `GET http://localhost:4000/health` → `{"status":"ok",...}`;
 `GET http://localhost:4000/ready` → `{"status":"ready","checks":{"database":"up","redis":"up"}}`.
 
@@ -59,8 +73,11 @@ Sanity check: `GET http://localhost:4000/health` → `{"status":"ok",...}`;
 | ------------- | -------------------------------------------------------------- |
 | `.env`        | Docker Compose only (`POSTGRES_*`, `REDIS_PORT`)                |
 | `server/.env` | Everything the backend reads (see `server/.env.example`)       |
+| `client/.env` | Frontend build settings such as `VITE_API_URL`                 |
 
 Key values: `CLIENT_ORIGIN` (trusted frontend origin for CORS/cookies),
+`PUBLIC_ORIGIN` (canonical backend origin for uploaded media URLs),
+`TRUST_PROXY_HOPS` (set only for a trusted reverse proxy),
 `DATABASE_URL` (empty = built from `POSTGRES_*`), `DB_POOL_*`,
 `REDIS_URL`, `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` (≥ 32 chars),
 `ACCESS_TOKEN_TTL` / `REFRESH_TOKEN_TTL_DAYS`, `COOKIE_*`,
@@ -107,7 +124,12 @@ ana-meet/
 ├── docker-compose.yml      # PostgreSQL 18 + Redis 7 (local infra)
 ├── .env / .env.example     # compose environment (untracked / template)
 ├── ANA Meet — Project Plan.md / Rules.md / AGENTS.md  # plan, hard rules, workflow
-├── client/                 # FUTURE frontend — do not implement yet
+├── client/                 # React frontend
+│   ├── src/app/            # routes
+│   ├── src/features/       # auth and conversation API services
+│   ├── src/layouts/        # application navigation
+│   ├── src/pages/          # screens
+│   └── src/shared/         # typed contracts and HTTP client
 ├── server/
 │   ├── src/
 │   │   ├── app.ts / server.ts      # wiring, bootstrap, graceful shutdown
@@ -156,10 +178,9 @@ membership/ownership server-side (see `RULES.md`).
 
 ## What's next
 
-- `client/` frontend against `server/docs/API.md` (auth cookies + `X-Requested-With`
-  header on mutations, socket `auth: { token }`).
+- Expand frontend integration coverage and production deployment configuration.
 - Production: `Dockerfile`, managed Postgres/Redis, real `CLIENT_ORIGIN`,
   `COOKIE_SECURE=true`, fresh secrets, `DB_AUTO_MIGRATE=false` + migrate in deploys.
-- V1 follow-ups (documented in code/API.md): per-conversation media ACLs,
-  notification muting, directed presence, pg_trgm search, storage quotas,
+- V1 follow-ups (documented in code/API.md): notification muting, directed
+  presence, pg_trgm search, storage quotas,
   sustained k6 load testing.
