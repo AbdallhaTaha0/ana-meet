@@ -36,6 +36,8 @@ export const authLimiter = rateLimit({
 export const apiLimiter = rateLimit({
   windowMs: config.rateLimit.apiWindowMs,
   max: config.rateLimit.apiMax,
+  // Auth writes have their own stricter limiter; session checks must remain available.
+  skip: (req) => req.path.startsWith('/v1/auth/'),
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   passOnStoreError: true,

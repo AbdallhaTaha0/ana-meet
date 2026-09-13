@@ -17,7 +17,7 @@ api.interceptors.response.use(undefined, async (error: AxiosError) => {
     error.response?.status === 401 &&
     request &&
     !request._retried &&
-    !request.url?.includes('/auth/')
+    (!request.url?.includes('/auth/') || request.url?.endsWith('/auth/me'))
   ) {
     request._retried = true;
     try {
@@ -30,7 +30,9 @@ api.interceptors.response.use(undefined, async (error: AxiosError) => {
       await refreshPromise;
       return api(request);
     } catch {
-      window.dispatchEvent(new Event('ana-auth-expired'));
+      if (!request.url?.endsWith('/auth/me')) {
+        window.dispatchEvent(new Event('ana-auth-expired'));
+      }
     }
   }
   return Promise.reject(error);
