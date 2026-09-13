@@ -1,0 +1,51 @@
+import type { Request, Response } from 'express';
+import { asyncHandler } from '../../common/asyncHandler';
+import { Errors } from '../../common/errors';
+import {
+  advanceMessageStatus,
+  deleteMessage,
+  editMessage,
+  listMessages,
+  sendMessage,
+} from './messages.service';
+
+function auth(req: Request): { userId: string; role: string } {
+  if (!req.auth) throw Errors.unauthorized();
+  return req.auth;
+}
+
+export const send = asyncHandler(async (req: Request, res: Response) => {
+  const { userId } = auth(req);
+  const params = req.params as unknown as { id: string };
+  const { message, created } = await sendMessage(userId, params.id, req.body);
+  res.status(created ? 201 : 200).json({ message });
+});
+
+export const history = asyncHandler(async (req: Request, res: Response) => {
+  const { userId } = auth(req);
+  const params = req.params as unknown as { id: string };
+  const query = req.query as unknown as { limit: number; cursor?: string };
+  const result = await listMessages(userId, params.id, query.limit, query.cursor);
+  res.status(200).json({ ...result, limit: query.limit });
+});
+
+export const edit = asyncHandler(async (req: Request, res: Response) => {
+  const { userId } = auth(req);
+  const params = req.params as unknown as { id: string; messageId: string };
+  const message = await editMessage(userId, params.id, params.messageId, req.body.content as string);
+  res.status(200).json({ message });
+});
+
+export const remove = asyncHandler(async (req: Request, res: Response) => {
+  const { userId, role } = auth(req);
+  const params = req.params as unknown as { id: string; messageId: string };
+  await deleteMessage(userId, role, params.id, params.messageId);
+  res.status(204).send();
+});
+
+export const setStatus = asyncHandler(async (req: Request, res: Response) => {
+  const { userId } = auth(req);
+  const params = req.params as unknown as { id: string; messageId: string };
+  const message = await advanceMessageStatus(userId, params.id, params.messageId, req.body.status);
+  res.status(200).json({ message });
+});
