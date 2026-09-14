@@ -21,6 +21,15 @@ export function useThread(conversationId: string | undefined, userId: string | u
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const markedRead = useRef<Set<string>>(new Set());
+  const removed = useRef<Set<string>>(new Set());
+  const mergeHistory = (items: Message[], id: string) => {
+    setMessages((current) => {
+      const visible = items.filter((message) => !removed.current.has(message.id));
+      return current
+        .filter((message) => message.conversationId === id)
+        .reduce(upsertMessage, visible);
+    });
+  };
   const refresh = useCallback(async () => {
     if (!conversationId) return;
     const [detail, page] = await Promise.all([
@@ -29,7 +38,7 @@ export function useThread(conversationId: string | undefined, userId: string | u
     ]);
     if (currentId.current === conversationId) {
       setActive(detail);
-      setMessages([...page.items].reverse());
+      mergeHistory([...page.items].reverse(), conversationId);
       setCursor(page.nextCursor);
     }
   }, [conversationId]);
@@ -47,6 +56,7 @@ export function useThread(conversationId: string | undefined, userId: string | u
     setLoading(true);
     setError('');
     markedRead.current.clear();
+    removed.current.clear();
     Promise.all([
       conversationsApi.detail(conversationId),
       conversationsApi.messages(conversationId),
@@ -54,7 +64,7 @@ export function useThread(conversationId: string | undefined, userId: string | u
       .then(([detail, page]) => {
         if (live) {
           setActive(detail);
-          setMessages([...page.items].reverse());
+          mergeHistory([...page.items].reverse(), conversationId);
           setCursor(page.nextCursor);
         }
       })
@@ -94,8 +104,10 @@ export function useThread(conversationId: string | undefined, userId: string | u
     }
   }
   const add = (message: Message) => setMessages((old) => upsertMessage(old, message));
-  const remove = (messageId: string) =>
+  const remove = (messageId: string) => {
+    removed.current.add(messageId);
     setMessages((old) => old.filter((message) => message.id !== messageId));
+  };
   const status = (messageId: string, next: Message['status']) =>
     setMessages((old) =>
       old.map((message) => (message.id === messageId ? { ...message, status: next } : message)),

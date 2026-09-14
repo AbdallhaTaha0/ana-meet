@@ -2,6 +2,7 @@ import { Op, UniqueConstraintError } from 'sequelize';
 import { Errors } from '../../common/errors';
 import { decodeCursor, encodeCursor } from '../../common/cursor';
 import { Conversation, ConversationParticipant, Message, User, type MessageStatus } from '../../db/models';
+import { getSequelize } from '../../db/sequelize';
 import { requireMembership } from '../conversations/conversations.service';
 import { assertNotBlocked, toUserCard, type UserCard } from '../blocks/blocks.service';
 import { assertOwnUploadReference } from '../uploads/uploads.access';
@@ -160,7 +161,14 @@ export async function sendMessage(
   };
 
   try {
-    const created = await Message.create(payload);
+    const created = await getSequelize().transaction(async (transaction) => {
+      const message = await Message.create(payload, { transaction });
+      await getSequelize().query(
+        "UPDATE conversations SET updated_at = GREATEST(updated_at + INTERVAL '1 millisecond', CURRENT_TIMESTAMP) WHERE id = :conversationId",
+        { replacements: { conversationId }, transaction },
+      );
+      return message;
+    });
     const view = await reloadView(created.id);
     // Durable fan-out (DB + real-time) for every member except the sender.
     // Best-effort: a notification failure is logged, never fails the send.

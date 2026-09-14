@@ -76,7 +76,7 @@ async function createSession(
   meta: SessionMeta,
 ): Promise<{ session: RefreshSession; tokens: TokenPair }> {
   const sessionId = newSessionId();
-  const access = signAccessToken(user.id, user.role);
+  const access = signAccessToken(user.id, user.role, user.authVersion);
   const refresh = signRefreshToken(user.id, sessionId);
   const session = await RefreshSession.create({
     id: sessionId,
@@ -210,7 +210,7 @@ async function rotateFrom(
   tx: Transaction,
 ): Promise<{ tokens: TokenPair }> {
   const sessionId = newSessionId();
-  const access = signAccessToken(user.id, user.role);
+  const access = signAccessToken(user.id, user.role, user.authVersion);
   const refresh = signRefreshToken(user.id, sessionId);
   const created = await RefreshSession.create(
     {
@@ -241,11 +241,14 @@ export async function logoutSession(presentedToken: string): Promise<void> {
 }
 
 export async function logoutAllSessions(userId: string): Promise<number> {
-  const [count] = await RefreshSession.update(
-    { revokedAt: new Date() },
-    { where: { userId, revokedAt: null } },
-  );
-  return count;
+  return getSequelize().transaction(async (transaction) => {
+    const [count] = await RefreshSession.update(
+      { revokedAt: new Date() },
+      { where: { userId, revokedAt: null }, transaction },
+    );
+    await User.increment('authVersion', { where: { id: userId }, transaction });
+    return count;
+  });
 }
 
 export async function getCurrentUser(userId: string): Promise<SafeUser> {

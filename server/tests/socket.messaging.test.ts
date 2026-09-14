@@ -40,9 +40,13 @@ describe.skipIf(!shouldRun)('socket messaging', () => {
     };
   }
 
-  function connect(token?: string): Promise<ClientSocket> {
+  function connect(token?: string, viaCookie = false): Promise<ClientSocket> {
     return new Promise((resolve, reject) => {
-      const socket = ioClient(baseUrl, { auth: token ? { token } : {}, reconnection: false });
+      const socket = ioClient(baseUrl, {
+        auth: token && !viaCookie ? { token } : {},
+        extraHeaders: token && viaCookie ? { Cookie: `am_access=${token}` } : {},
+        reconnection: false,
+      });
       socket.on('connect', () => resolve(socket));
       socket.on('connect_error', (err) => reject(err));
     });
@@ -136,6 +140,12 @@ describe.skipIf(!shouldRun)('socket messaging', () => {
       alice.disconnect();
       bob.disconnect();
     }
+  });
+
+  it('authenticates a browser-style socket using the access cookie', async () => {
+    const alice = await connect(tokens.alice, true);
+    expect(alice.connected).toBe(true);
+    alice.disconnect();
   });
 
   it('broadcasts REST messages to the other member without a reload', async () => {
@@ -280,11 +290,21 @@ describe.skipIf(!shouldRun)('socket messaging', () => {
       };
       expect(presence.online).toBe(false);
 
+      let leaked = false;
+      bob.on('user:online', ({ userId }: { userId: string }) => {
+        if (userId === ids.alice) leaked = true;
+      });
+      alice.disconnect();
+      const reconnect = await connect(tokens.alice);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(leaked).toBe(false);
+
       await agent.delete(`/api/v1/blocks/${ids.bob}`).set(ajax);
       const presenceAfter = (await emitAck(bob, 'presence:get', { userId: ids.alice })) as {
         online: boolean;
       };
       expect(presenceAfter.online).toBe(true);
+      reconnect.disconnect();
     } finally {
       alice.disconnect();
       bob.disconnect();
@@ -299,5 +319,18 @@ describe.skipIf(!shouldRun)('socket messaging', () => {
     } finally {
       alice.disconnect();
     }
+  });
+
+  it('disconnects sockets and rejects old access tokens after logout-all', async () => {
+    const carol = await connect(tokens.carol);
+    const disconnected = waitFor(carol, 'disconnect');
+    const agent = request.agent(app);
+    await agent.post('/api/v1/auth/login').set(ajax).send({
+      identifier: 'carol', password: 's3cure-passphrase',
+    });
+    expect((await agent.post('/api/v1/auth/logout-all').set(ajax)).status).toBe(204);
+    await disconnected;
+    expect((await request(app).get('/api/v1/auth/me').set('Cookie', `am_access=${tokens.carol}`)).status).toBe(401);
+    await expect(connect(tokens.carol)).rejects.toThrow('UNAUTHORIZED');
   });
 });

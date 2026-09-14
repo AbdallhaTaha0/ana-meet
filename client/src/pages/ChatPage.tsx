@@ -16,7 +16,7 @@ import { ErrorNotice } from '../shared/ui';
 export function ChatPage() {
   const { conversationId } = useParams();
   const navigate = useNavigate();
-  const { user, refreshUser } = useAuth();
+  const { user } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -70,7 +70,7 @@ export function ChatPage() {
     };
   }, [creating, personQuery]);
   const thread = useThread(conversationId, user?.id);
-  const realtime = useChatRealtime(conversationId, thread.active?.peer?.id, user?.id, refreshUser, {
+  const realtime = useChatRealtime(conversationId, thread.active?.peer?.id, user?.id, {
     refreshList,
     refreshThread: thread.refresh,
     add: thread.add,

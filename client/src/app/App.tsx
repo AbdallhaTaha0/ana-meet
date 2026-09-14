@@ -3,6 +3,7 @@ import { useAuth } from '../features/auth/AuthProvider';
 import { LandingPage } from '../pages/LandingPage';
 import { AuthPage } from '../pages/AuthPage';
 import { AppLayout } from '../layouts/AppLayout';
+import { RealtimeProvider } from '../features/realtime/RealtimeProvider';
 import { ChatPage } from '../pages/ChatPage';
 import { PeoplePage } from '../pages/PeoplePage';
 import { StoriesPage } from '../pages/StoriesPage';
@@ -18,7 +19,13 @@ function Protected() {
         Opening ANA Meet…
       </div>
     );
-  return user ? <AppLayout /> : <Navigate to="/login" replace />;
+  return user ? (
+    <RealtimeProvider>
+      <AppLayout />
+    </RealtimeProvider>
+  ) : (
+    <Navigate to="/login" replace />
+  );
 }
 
 export function App() {

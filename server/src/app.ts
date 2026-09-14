@@ -25,6 +25,7 @@ import { usersRoutes } from './modules/users/users.routes';
 export function createApp(): express.Express {
   const app = express();
   app.disable('x-powered-by');
+  app.disable('etag');
   app.set('trust proxy', config.trustProxyHops);
 
   app.use(helmet());

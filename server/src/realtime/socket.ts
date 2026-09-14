@@ -1,4 +1,4 @@
-import cookie from 'cookie';
+import { parse as parseCookie } from 'cookie';
 import type { Server as HttpServer } from 'http';
 import { Server as SocketServer, type Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
@@ -28,7 +28,7 @@ function tokenFromHandshake(socket: Socket): string | null {
   if (fromAuth.success && fromAuth.data.token) return fromAuth.data.token;
   const header = socket.handshake.headers.cookie;
   if (header) {
-    const parsed = cookie.parse(header);
+    const parsed = parseCookie(header);
     if (parsed[ACCESS_COOKIE]) return parsed[ACCESS_COOKIE];
   }
   return null;
@@ -65,8 +65,9 @@ export function initSocket(httpServer: HttpServer): SocketServer {
       const token = tokenFromHandshake(socket);
       if (!token) return next(new Error('UNAUTHORIZED'));
       const payload = verifyAccessToken(token);
-      const user = await User.findByPk(payload.sub, { attributes: ['id', 'role', 'status'] });
-      if (!user || user.status !== 'ACTIVE') return next(new Error('UNAUTHORIZED'));
+      const user = await User.findByPk(payload.sub, { attributes: ['id', 'role', 'status', 'authVersion'] });
+      if (!user || user.status !== 'ACTIVE' || (payload.version ?? 0) !== user.authVersion)
+        return next(new Error('UNAUTHORIZED'));
       socket.data.userId = user.id as string;
       socket.data.role = user.role as string;
       next();
@@ -87,11 +88,9 @@ export function initSocket(httpServer: HttpServer): SocketServer {
     logger.info({ userId, socketId: socket.id, total: io.engine.clientsCount }, 'Socket connected');
 
     // Presence is ephemeral (Redis set of socket ids, multi-device safe).
-    addPresenceSocket(userId, socket.id)
-      .then((count) => {
-        if (count === 1) io.emit('user:online', { userId });
-      })
-      .catch((err: unknown) => logger.warn({ err: String(err) }, 'Presence add failed'));
+    void addPresenceSocket(userId, socket.id).catch((err: unknown) =>
+      logger.warn({ err: String(err) }, 'Presence add failed'),
+    );
 
     registerMessagingHandlers(io, socket);
 
@@ -138,11 +137,9 @@ export function initSocket(httpServer: HttpServer): SocketServer {
     });
 
     socket.on('disconnect', () => {
-      removePresenceSocket(userId, socket.id)
-        .then((remaining) => {
-          if (remaining === 0) io.emit('user:offline', { userId });
-        })
-        .catch((err: unknown) => logger.warn({ err: String(err) }, 'Presence remove failed'));
+      void removePresenceSocket(userId, socket.id).catch((err: unknown) =>
+        logger.warn({ err: String(err) }, 'Presence remove failed'),
+      );
       logger.info({ userId, socketId: socket.id }, 'Socket disconnected');
     });
   });

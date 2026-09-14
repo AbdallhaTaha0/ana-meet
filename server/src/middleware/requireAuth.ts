@@ -42,8 +42,8 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
       next(Errors.unauthorized('Invalid or expired token'));
       return;
     }
-    const user = await User.findByPk(payload.sub, { attributes: ['id', 'role', 'status'] });
-    if (!user || user.status !== 'ACTIVE') {
+    const user = await User.findByPk(payload.sub, { attributes: ['id', 'role', 'status', 'authVersion'] });
+    if (!user || user.status !== 'ACTIVE' || (payload.version ?? 0) !== user.authVersion) {
       next(Errors.unauthorized('Invalid or expired token'));
       return;
     }

@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { io } from 'socket.io-client';
 import { api, errorMessage } from '../shared/api';
+import { useRealtimeSocket } from '../features/realtime/RealtimeProvider';
 import type { CursorPage, Notification } from '../shared/types';
 import { Button, ContentPage, EmptyState, ErrorNotice, IconButton, PageHeader } from '../shared/ui';
 
 export function NotificationsPage() {
+  const socket = useRealtimeSocket();
   const navigate = useNavigate();
+  const arrivals = useRef(new Map<string, Notification>());
   const [items, setItems] = useState<Notification[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -15,27 +17,34 @@ export function NotificationsPage() {
     const { data } = await api.get<CursorPage<Notification>>('/api/v1/notifications', {
       params: { limit: 30, cursor: next },
     });
-    setItems((old) => (next ? [...old, ...data.items] : data.items));
+    setItems((old) => {
+      if (next)
+        return [...old, ...data.items.filter((item) => !old.some((row) => row.id === item.id))];
+      return [
+        ...[...arrivals.current.values()].filter(
+          (item) => !data.items.some((row) => row.id === item.id),
+        ),
+        ...data.items,
+      ].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    });
     setCursor(data.nextCursor);
   };
   useEffect(() => {
-    const socket = io(import.meta.env.VITE_API_URL || undefined, { withCredentials: true });
     const reload = () => {
       void load().catch((cause) => setError(errorMessage(cause)));
     };
     reload();
     socket.on('connect', reload);
-    socket.on('notification:new', ({ notification }: { notification: Notification }) =>
-      setItems((old) => [notification, ...old.filter((item) => item.id !== notification.id)]),
-    );
-    const heartbeat = window.setInterval(() => {
-      if (socket.connected) socket.emit('presence:heartbeat', {}, () => undefined);
-    }, 30000);
-    return () => {
-      window.clearInterval(heartbeat);
-      socket.disconnect();
+    const received = ({ notification }: { notification: Notification }) => {
+      arrivals.current.set(notification.id, notification);
+      setItems((old) => [notification, ...old.filter((item) => item.id !== notification.id)]);
     };
-  }, []);
+    socket.on('notification:new', received);
+    return () => {
+      socket.off('connect', reload);
+      socket.off('notification:new', received);
+    };
+  }, [socket]);
   async function read(item: Notification) {
     try {
       if (!item.readAt) await api.post('/api/v1/notifications/read', { ids: [item.id] });
@@ -60,6 +69,7 @@ export function NotificationsPage() {
   async function remove(id: string) {
     try {
       await api.delete(`/api/v1/notifications/${id}`);
+      arrivals.current.delete(id);
       setItems((old) => old.filter((item) => item.id !== id));
     } catch (cause) {
       setError(errorMessage(cause));

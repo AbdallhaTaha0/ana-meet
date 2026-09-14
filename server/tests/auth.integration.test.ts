@@ -91,6 +91,9 @@ describe.skipIf(!shouldRun)('auth integration', () => {
     const me = await agent.get('/api/v1/auth/me');
     expect(me.status).toBe(200);
     expect(me.body.user.email).toBe(userPayload.email);
+    expect(me.headers['cache-control']).toBe('no-store');
+    const conditional = await agent.get('/api/v1/auth/me').set('If-None-Match', 'W/"old"');
+    expect(conditional.status).toBe(200);
   });
 
   it('returns identical errors for unknown user vs wrong password (no enumeration)', async () => {
@@ -193,8 +196,11 @@ describe.skipIf(!shouldRun)('auth integration', () => {
     await b.post('/api/v1/auth/login').set(ajax).send(creds);
 
     expect((await a.post('/api/v1/auth/logout-all').set(ajax)).status).toBe(204);
+    expect((await b.get('/api/v1/auth/me')).status).toBe(401);
     expect((await a.post('/api/v1/auth/refresh').set(ajax)).status).toBe(401);
     expect((await b.post('/api/v1/auth/refresh').set(ajax)).status).toBe(401);
+    expect((await b.post('/api/v1/auth/login').set(ajax).send(creds)).status).toBe(200);
+    expect((await b.get('/api/v1/auth/me')).status).toBe(200);
   });
 
   it('blocks login and token use for disabled accounts', async () => {

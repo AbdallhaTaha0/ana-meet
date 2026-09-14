@@ -12,11 +12,12 @@ export interface UserAttributes {
   publicId: string;
   role: AccountRole;
   status: AccountStatus;
+  authVersion: number;
   createdAt?: Date;
   updatedAt?: Date;
 }
 
-type UserCreation = Optional<UserAttributes, 'id' | 'role' | 'status' | 'createdAt' | 'updatedAt'>;
+type UserCreation = Optional<UserAttributes, 'id' | 'role' | 'status' | 'authVersion' | 'createdAt' | 'updatedAt'>;
 
 export class User extends Model<UserAttributes, UserCreation> implements UserAttributes {
   declare id: string;
@@ -27,6 +28,7 @@ export class User extends Model<UserAttributes, UserCreation> implements UserAtt
   declare publicId: string;
   declare role: AccountRole;
   declare status: AccountStatus;
+  declare authVersion: number;
   declare readonly createdAt: Date;
   declare readonly updatedAt: Date;
 }
@@ -50,6 +52,7 @@ export function initUser(sequelize: Sequelize): void {
         allowNull: false,
         defaultValue: 'ACTIVE',
       },
+      authVersion: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0, field: 'auth_version' },
     },
     {
       sequelize,

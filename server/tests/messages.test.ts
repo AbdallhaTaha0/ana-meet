@@ -78,11 +78,17 @@ describe.skipIf(!shouldRun)('messages', () => {
 
   describe('send', () => {
     it('sends a text message as SENT', async () => {
+      const before = await agents.alice.get(`/api/v1/conversations/${directId}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
       const res = await send(agents.alice, directId, text('Hello Bob'));
       expect(res.status).toBe(201);
       expect(res.body.message.status).toBe('SENT');
       expect(res.body.message.sender.username).toBe('alice');
       expect(res.body.message.editedAt).toBeNull();
+      const after = await agents.alice.get(`/api/v1/conversations/${directId}`);
+      expect(Date.parse(after.body.conversation.updatedAt)).toBeGreaterThan(
+        Date.parse(before.body.conversation.updatedAt),
+      );
     });
 
     it('deduplicates retried sends by clientMessageId', async () => {

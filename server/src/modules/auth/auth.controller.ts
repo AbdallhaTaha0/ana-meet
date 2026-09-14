@@ -3,6 +3,7 @@ import { AppError } from '../../common/errors';
 import { Errors } from '../../common/errors';
 import { asyncHandler } from '../../common/asyncHandler';
 import { clearAuthCookies, REFRESH_COOKIE, setAuthCookies } from '../../common/cookies';
+import { disconnectUserSockets } from '../../realtime/bus';
 import type { SessionMeta } from './auth.service';
 import {
   getCurrentUser,
@@ -66,6 +67,7 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
 export const logoutAll = asyncHandler(async (req: Request, res: Response) => {
   if (!req.auth) throw Errors.unauthorized();
   await logoutAllSessions(req.auth.userId);
+  disconnectUserSockets([req.auth.userId]);
   clearAuthCookies(res);
   res.status(204).send();
 });

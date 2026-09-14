@@ -8,6 +8,7 @@ export interface AccessTokenPayload {
   sub: string; // user id
   role: AccountRole;
   type: 'access';
+  version?: number;
 }
 
 export interface RefreshTokenPayload {
@@ -16,8 +17,8 @@ export interface RefreshTokenPayload {
   type: 'refresh';
 }
 
-export function signAccessToken(userId: string, role: AccountRole): string {
-  const payload: AccessTokenPayload = { sub: userId, role, type: 'access' };
+export function signAccessToken(userId: string, role: AccountRole, version = 0): string {
+  const payload: AccessTokenPayload = { sub: userId, role, type: 'access', version };
   return jwt.sign(payload, config.jwt.accessSecret, {
     expiresIn: config.jwt.accessTtl as jwt.SignOptions['expiresIn'],
   });

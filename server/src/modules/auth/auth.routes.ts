@@ -7,6 +7,11 @@ import { loginSchema, registerSchema } from './auth.schemas';
 
 export const authRoutes: Router = Router();
 
+authRoutes.use((_req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+
 // Brute-force sensitive endpoints share a strict per-IP limiter.
 authRoutes.post('/register', authLimiter, validate('body', registerSchema), register);
 authRoutes.post('/login', authLimiter, validate('body', loginSchema), login);
