@@ -7,6 +7,7 @@ import {
   deleteMessage,
   editMessage,
   listMessages,
+  markConversationRead,
   sendMessage,
 } from './messages.service';
 
@@ -60,4 +61,21 @@ export const setStatus = asyncHandler(async (req: Request, res: Response) => {
     status: message.status,
   });
   res.status(200).json({ message });
+});
+
+export const readAll = asyncHandler(async (req: Request, res: Response) => {
+  const { userId } = auth(req);
+  const params = req.params as unknown as { id: string };
+  const result = await markConversationRead(userId, params.id);
+  // Same per-message status contract as individual receipts, one cheap
+  // socket emit each (no HTTP storm for the reader).
+  for (const messageId of result.messageIds) {
+    // eslint-disable-next-line no-await-in-loop
+    await publishConversationEvent(params.id, 'message:status', {
+      conversationId: params.id,
+      messageId,
+      status: 'READ',
+    });
+  }
+  res.status(200).json({ updated: result.updated });
 });

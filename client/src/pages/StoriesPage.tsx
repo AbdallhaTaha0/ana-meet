@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ImagePlus, X } from 'lucide-react';
-import { api, errorMessage } from '../shared/api';
+import { api, errorMessage, isRequestAbort } from '../shared/api';
+import { readFetchCache, writeFetchCache } from '../shared/fetchCache';
 import type { Story } from '../shared/types';
 import { useAuth } from '../features/auth/AuthProvider';
 import { conversationsApi } from '../features/conversations/service';
@@ -18,14 +19,26 @@ export function StoriesPage() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const load = useCallback(
-    () =>
+    (signal?: AbortSignal) =>
       api
-        .get<{ items: Story[] }>('/api/v1/stories/feed', { params: { limit: 100 } })
-        .then(({ data }) => setStories(data.items)),
+        .get<{ items: Story[] }>('/api/v1/stories/feed', { params: { limit: 100 }, signal })
+        .then(({ data }) => {
+          writeFetchCache('stories:feed', data.items);
+          setStories(data.items);
+        }),
     [],
   );
   useEffect(() => {
-    void load().catch((cause) => setError(errorMessage(cause)));
+    const cached = readFetchCache<Story[]>('stories:feed');
+    if (cached) {
+      setStories(cached);
+      return;
+    }
+    const controller = new AbortController();
+    void load(controller.signal).catch((cause) => {
+      if (!isRequestAbort(cause)) setError(errorMessage(cause));
+    });
+    return () => controller.abort();
   }, [load]);
 
   // Live feed: insert on story:new, remove on story:deleted, refetch on reconnect.
@@ -99,14 +112,14 @@ export function StoriesPage() {
       setBusy(false);
     }
   }
-  async function remove(id: string) {
+  const remove = useCallback(async (id: string) => {
     try {
       await api.delete(`/api/v1/stories/${id}`);
       setStories((old) => old.filter((s) => s.id !== id));
     } catch (cause) {
       setError(errorMessage(cause));
     }
-  }
+  }, []);
   const canShare = Boolean(content.trim() || file) && !busy;
   return (
     <ContentPage>
@@ -185,9 +198,7 @@ export function StoriesPage() {
               key={story.id}
               story={story}
               owned={story.owner.id === user?.id}
-              onDelete={() => {
-                void remove(story.id);
-              }}
+              onDelete={remove}
             />
           ))}
         </div>

@@ -36,3 +36,20 @@
     outline-offset: 2px;
   }
 }
+
+@layer utilities {
+  /* Permanent jank guard for long feeds: the browser skips layout/paint of
+     offscreen rows entirely. Intrinsic sizes keep scrollbars stable. */
+  .cv-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 88px;
+  }
+  .cv-message {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 120px;
+  }
+  .cv-card {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 320px;
+  }
+}

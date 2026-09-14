@@ -324,6 +324,13 @@ Body: `{ content }`. `200 { message }`.
 
 Body: `{ status: "DELIVERED" | "READ" }`. `200 { message }`.
 
+### `POST /api/v1/conversations/:id/messages/read` — member
+
+Batch read: same outcome as marking every foreign unread message `READ`
+individually (status advance + own notifications cleared), in one request.
+Clients call this once per chat open instead of one POST per message.
+`200 { updated }` (`0` when nothing is unread). `404` for outsiders.
+
 ## Stories
 
 Story: `{ id, owner (card), type TEXT|IMAGE|VIDEO, content,

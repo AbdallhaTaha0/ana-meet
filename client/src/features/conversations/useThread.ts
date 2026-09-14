@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { errorMessage } from '../../shared/api';
+import { errorMessage, isRequestAbort } from '../../shared/api';
 import type { Conversation, Message } from '../../shared/types';
 import { conversationsApi } from './service';
 
@@ -57,9 +57,11 @@ export function useThread(conversationId: string | undefined, userId: string | u
     setError('');
     markedRead.current.clear();
     removed.current.clear();
+    // Aborted on rapid navigation so stale loads never pile up server-side.
+    const controller = new AbortController();
     Promise.all([
-      conversationsApi.detail(conversationId),
-      conversationsApi.messages(conversationId),
+      conversationsApi.detail(conversationId, controller.signal),
+      conversationsApi.messages(conversationId, undefined, controller.signal),
     ])
       .then(([detail, page]) => {
         if (live) {
@@ -69,6 +71,7 @@ export function useThread(conversationId: string | undefined, userId: string | u
         }
       })
       .catch((cause) => {
+        if (isRequestAbort(cause)) return;
         if (live) setError(errorMessage(cause));
       })
       .finally(() => {
@@ -76,22 +79,24 @@ export function useThread(conversationId: string | undefined, userId: string | u
       });
     return () => {
       live = false;
+      controller.abort();
     };
   }, [conversationId]);
   useEffect(() => {
     if (!conversationId || !userId) return;
-    for (const message of messages) {
-      if (
-        message.senderId === userId ||
-        message.status === 'READ' ||
-        markedRead.current.has(message.id)
-      )
-        continue;
-      markedRead.current.add(message.id);
-      void conversationsApi.read(conversationId, message.id).catch(() => {
-        markedRead.current.delete(message.id);
-      });
-    }
+    // One batched request per new batch of unread messages — never one POST
+    // per message, no matter how fast the user switches chats.
+    const unread = messages.filter(
+      (message) =>
+        message.senderId !== userId &&
+        message.status !== 'READ' &&
+        !markedRead.current.has(message.id),
+    );
+    if (unread.length === 0) return;
+    for (const message of unread) markedRead.current.add(message.id);
+    void conversationsApi.readAll(conversationId).catch(() => {
+      for (const message of unread) markedRead.current.delete(message.id);
+    });
   }, [conversationId, messages, userId]);
   async function loadOlder() {
     if (!conversationId || !cursor) return;
@@ -103,15 +108,21 @@ export function useThread(conversationId: string | undefined, userId: string | u
       setError(errorMessage(cause));
     }
   }
-  const add = (message: Message) => setMessages((old) => upsertMessage(old, message));
-  const remove = (messageId: string) => {
+  const add = useCallback(
+    (message: Message) => setMessages((old) => upsertMessage(old, message)),
+    [],
+  );
+  const remove = useCallback((messageId: string) => {
     removed.current.add(messageId);
     setMessages((old) => old.filter((message) => message.id !== messageId));
-  };
-  const status = (messageId: string, next: Message['status']) =>
-    setMessages((old) =>
-      old.map((message) => (message.id === messageId ? { ...message, status: next } : message)),
-    );
+  }, []);
+  const status = useCallback(
+    (messageId: string, next: Message['status']) =>
+      setMessages((old) =>
+        old.map((message) => (message.id === messageId ? { ...message, status: next } : message)),
+      ),
+    [],
+  );
   return {
     active,
     setActive,

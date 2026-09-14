@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Check, CheckCheck } from 'lucide-react';
 import type { Message } from '../../shared/types';
 import { useObjectMedia } from '../../shared/useObjectMedia';
@@ -12,7 +13,7 @@ interface Props {
   onDelete: (message: Message) => void;
 }
 
-export function MessageItem({
+export const MessageItem = memo(function MessageItem({
   message,
   mine,
   showSender,
@@ -27,7 +28,7 @@ export function MessageItem({
   const media = useObjectMedia(message.media?.url);
   return (
     <article
-      className={`flex max-w-[86%] flex-col gap-1 md:max-w-[75%] ${mine ? 'self-end items-end' : 'items-start'}`}
+      className={`cv-message flex max-w-[86%] flex-col gap-1 md:max-w-[75%] ${mine ? 'self-end items-end' : 'items-start'}`}
     >
       <div
         className={`max-w-full break-words rounded-2xl border px-4 pb-2 pt-3 ${mine ? 'rounded-br-sm border-mist bg-mist' : 'rounded-bl-sm border-line bg-white'}`}
@@ -45,31 +46,34 @@ export function MessageItem({
         {message.content && (
           <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
         )}
-        {message.media &&
-          (media.failed ? (
-            <span className="text-xs text-muted">Attachment unavailable.</span>
-          ) : media.loading || !media.src ? (
-            <span className="text-xs text-muted">Loading attachment…</span>
-          ) : message.type === 'IMAGE' ? (
-            <img
-              className="max-h-80 rounded-lg"
-              src={media.src}
-              alt={message.media.fileName || 'Shared image'}
-              loading="lazy"
-            />
-          ) : message.type === 'VIDEO' ? (
-            <video className="max-h-80 rounded-lg" controls src={media.src} />
-          ) : (
-            <a
-              className="text-sm text-sea underline"
-              href={media.src}
-              target="_blank"
-              rel="noreferrer"
-              download={message.media.fileName || undefined}
-            >
-              {message.media.fileName || 'Download file'}
-            </a>
-          ))}
+        {message.media && (
+          <div ref={media.gateRef}>
+            {media.failed ? (
+              <span className="text-xs text-muted">Attachment unavailable.</span>
+            ) : media.loading || !media.src ? (
+              <span className="text-xs text-muted">Loading attachment…</span>
+            ) : message.type === 'IMAGE' ? (
+              <img
+                className="max-h-80 rounded-lg"
+                src={media.src}
+                alt={message.media.fileName || 'Shared image'}
+                loading="lazy"
+              />
+            ) : message.type === 'VIDEO' ? (
+              <video className="max-h-80 rounded-lg" controls preload="metadata" src={media.src} />
+            ) : (
+              <a
+                className="text-sm text-sea underline"
+                href={media.src}
+                target="_blank"
+                rel="noreferrer"
+                download={message.media.fileName || undefined}
+              >
+                {message.media.fileName || 'Download file'}
+              </a>
+            )}
+          </div>
+        )}
         <div className="mt-1 flex items-center justify-end gap-1 text-[11px] text-muted">
           <time>{time}</time>
           {message.editedAt && <span>edited</span>}
@@ -98,4 +102,4 @@ export function MessageItem({
       </div>
     </article>
   );
-}
+});

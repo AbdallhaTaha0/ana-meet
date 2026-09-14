@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { api, errorMessage } from '../shared/api';
+import { api, errorMessage, isRequestAbort } from '../shared/api';
+import { readFetchCache, writeFetchCache } from '../shared/fetchCache';
 import { useRealtimeSocket } from '../features/realtime/RealtimeProvider';
 import type { CursorPage, Notification } from '../shared/types';
 import { Button, ContentPage, EmptyState, ErrorNotice, IconButton, PageHeader } from '../shared/ui';
@@ -13,10 +14,12 @@ export function NotificationsPage() {
   const [items, setItems] = useState<Notification[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const load = async (next?: string) => {
+  const load = async (next?: string, signal?: AbortSignal) => {
     const { data } = await api.get<CursorPage<Notification>>('/api/v1/notifications', {
       params: { limit: 30, cursor: next },
+      signal,
     });
+    if (!next) writeFetchCache('notifications:list', { items: data.items, cursor: data.nextCursor });
     setItems((old) => {
       if (next)
         return [...old, ...data.items.filter((item) => !old.some((row) => row.id === item.id))];
@@ -31,11 +34,22 @@ export function NotificationsPage() {
   };
   useEffect(() => {
     let live = true;
+    const controller = new AbortController();
     // Opening the page means seen: load, then clear the whole stack so the
     // sidebar badge drops and dots don't linger after reading.
     const open = async () => {
       try {
-        await load();
+        // Rapid revisits reuse the seconds-old list; the read-all below still
+        // runs every visit so the stack reliably clears.
+        const cached = readFetchCache<{ items: Notification[]; cursor: string | null }>(
+          'notifications:list',
+        );
+        if (cached) {
+          setItems(cached.items);
+          setCursor(cached.cursor);
+        } else {
+          await load(undefined, controller.signal);
+        }
         await api.post('/api/v1/notifications/read-all');
         if (!live) return;
         setItems((old) =>
@@ -43,6 +57,7 @@ export function NotificationsPage() {
         );
         window.dispatchEvent(new Event('ana-notifications-seen'));
       } catch (cause) {
+        if (isRequestAbort(cause)) return;
         if (live) setError(errorMessage(cause));
       }
     };
@@ -79,6 +94,7 @@ export function NotificationsPage() {
     socket.on('notification:new', received);
     return () => {
       live = false;
+      controller.abort();
       socket.off('connect', reload);
       socket.off('notification:new', received);
     };

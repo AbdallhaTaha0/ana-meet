@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/requireAuth';
 import { validate } from '../../middleware/validate';
-import { edit, history, remove, send, setStatus } from './messages.controller';
+import { edit, history, readAll, remove, send, setStatus } from './messages.controller';
 import {
   conversationIdParamSchema,
   editMessageSchema,
@@ -30,6 +30,11 @@ messagesRoutes.patch(
   edit,
 );
 messagesRoutes.delete('/:messageId', validate('params', messageIdParamSchema), remove);
+messagesRoutes.post(
+  '/read',
+  validate('params', conversationIdParamSchema),
+  readAll,
+);
 messagesRoutes.post(
   '/:messageId/status',
   validate('params', messageIdParamSchema),

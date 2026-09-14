@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, errorMessage } from '../../shared/api';
+import { api, errorMessage, isRequestAbort } from '../../shared/api';
+import { readFetchCache, writeFetchCache } from '../../shared/fetchCache';
 import type { Page, UserCard } from '../../shared/types';
 import { conversationsApi } from '../conversations/service';
 import { useConfirm } from '../../shared/ConfirmDialog';
@@ -19,33 +20,66 @@ export function usePeople() {
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
   const loadContacts = useCallback(
-    () =>
+    (signal?: AbortSignal) =>
       api
-        .get<Page<UserCard>>('/api/v1/contacts', { params: { limit: 100 } })
+        .get<Page<UserCard>>('/api/v1/contacts', { params: { limit: 100 }, signal })
         .then(({ data }) => setContacts(data.items)),
     [],
   );
   const loadBlocked = useCallback(
-    () =>
+    (signal?: AbortSignal) =>
       api
-        .get<Page<UserCard>>('/api/v1/blocks', { params: { limit: 100 } })
+        .get<Page<UserCard>>('/api/v1/blocks', { params: { limit: 100 }, signal })
         .then(({ data }) => setBlocked(data.items)),
     [],
   );
   const loadRequests = useCallback(
-    () => friendsApi.list('all').then((page) => setRequests(page.items)),
+    (signal?: AbortSignal) =>
+      friendsApi.list('all', undefined, signal).then((page) => setRequests(page.items)),
     [],
   );
   useEffect(() => {
-    void Promise.all([
-      loadContacts(),
-      loadBlocked(),
-      loadRequests(),
-      api
-        .get<Page<UserCard>>('/api/v1/bots', { params: { limit: 50 } })
-        .then(({ data }) => setBots(data.items)),
-    ]).catch((cause) => setError(errorMessage(cause)));
-  }, [loadBlocked, loadContacts, loadRequests]);
+    // One cached bundle for the whole tab; socket hints refresh pieces live.
+    const cached = readFetchCache<{
+      contacts: UserCard[];
+      blocked: UserCard[];
+      requests: FriendRequest[];
+      bots: UserCard[];
+    }>('people:bundle');
+    if (cached) {
+      setContacts(cached.contacts);
+      setBlocked(cached.blocked);
+      setRequests(cached.requests);
+      setBots(cached.bots);
+      return;
+    }
+    const controller = new AbortController();
+    const signal = controller.signal;
+    void (async () => {
+      try {
+        const [contactsPage, blockedPage, requestsPage, botsPage] = await Promise.all([
+          api.get<Page<UserCard>>('/api/v1/contacts', { params: { limit: 100 }, signal }),
+          api.get<Page<UserCard>>('/api/v1/blocks', { params: { limit: 100 }, signal }),
+          friendsApi.list('all', undefined, signal),
+          api.get<Page<UserCard>>('/api/v1/bots', { params: { limit: 50 }, signal }),
+        ]);
+        setContacts(contactsPage.data.items);
+        setBlocked(blockedPage.data.items);
+        setRequests(requestsPage.items);
+        setBots(botsPage.data.items);
+        writeFetchCache('people:bundle', {
+          contacts: contactsPage.data.items,
+          blocked: blockedPage.data.items,
+          requests: requestsPage.items,
+          bots: botsPage.data.items,
+        });
+      } catch (cause) {
+        if (!isRequestAbort(cause)) setError(errorMessage(cause));
+      }
+    })();
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Live: friend requests, contacts, and blocks refresh on socket hints + reconnect.
   useEffect(() => {

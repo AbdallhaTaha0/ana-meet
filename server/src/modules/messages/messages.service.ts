@@ -334,3 +334,53 @@ export async function advanceMessageStatus(
   }
   return reloadView(message.id);
 }
+
+// --- Batch read (one request per chat open, not one per message) ---
+
+export async function markConversationRead(
+  userId: string,
+  conversationId: string,
+): Promise<{ updated: number; messageIds: string[] }> {
+  const { conversation } = await requireMembership(userId, conversationId);
+  if (conversation.type === 'DIRECT') {
+    // Same receipt privacy as single-message reads.
+    const peer = await ConversationParticipant.findOne({
+      where: { conversationId, userId: { [Op.ne]: userId } },
+      attributes: ['userId'],
+    });
+    if (peer) await assertNotBlocked(userId, peer.userId);
+  }
+  // Same outcome as marking every foreign unread message READ individually:
+  // global status advances (shared-field semantics unchanged) and the
+  // reader's notifications for the conversation clear.
+  const targets = await Message.findAll({
+    where: {
+      conversationId,
+      status: { [Op.ne]: 'READ' },
+      [Op.or]: [{ senderId: { [Op.ne]: userId } }, { senderId: null }],
+    },
+    attributes: ['id'],
+  });
+  const messageIds = targets.map((m) => m.id);
+  if (messageIds.length > 0) {
+    await Message.update({ status: 'READ' }, { where: { id: { [Op.in]: messageIds } } });
+  }
+  let notificationsUpdated = 0;
+  try {
+    const [n] = await Notification.update(
+      { readAt: new Date() },
+      {
+        where: {
+          recipientId: userId,
+          conversationId,
+          type: 'MESSAGE',
+          readAt: null,
+        },
+      },
+    );
+    notificationsUpdated = n;
+  } catch {
+    // Best-effort only.
+  }
+  return { updated: messageIds.length + notificationsUpdated, messageIds };
+}

@@ -1,5 +1,5 @@
-import { useLayoutEffect, useRef } from 'react';
-import type { CurrentUser } from '../../shared/types';
+import { useCallback, useLayoutEffect, useRef } from 'react';
+import type { CurrentUser, Message } from '../../shared/types';
 import { MessageItem } from './MessageItem';
 import type { useThread } from './useThread';
 import type { useMessageActions } from './useMessageActions';
@@ -18,6 +18,14 @@ export function MessageTimeline({
   const viewport = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
   const last = thread.messages.at(-1);
+  // Stable per-message callbacks so memoized rows only re-render on data change.
+  const { setReply, startEdit, remove } = actions;
+  const handleDelete = useCallback(
+    (item: Message) => {
+      void remove(item);
+    },
+    [remove],
+  );
 
   useLayoutEffect(() => {
     const element = viewport.current;
@@ -55,9 +63,9 @@ export function MessageTimeline({
             mine={message.senderId === user?.id}
             showSender={thread.active?.type === 'GROUP' && message.senderId !== user?.id}
             canDelete={message.senderId === user?.id || user?.role === 'ADMIN'}
-            onReply={actions.setReply}
-            onEdit={actions.startEdit}
-            onDelete={(item) => void actions.remove(item)}
+            onReply={setReply}
+            onEdit={startEdit}
+            onDelete={handleDelete}
           />
         ))}
       </div>

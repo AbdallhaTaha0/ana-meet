@@ -11,10 +11,15 @@ export interface FriendRequest {
 }
 
 export const friendsApi = {
-  list: async (direction: 'inbound' | 'outbound' | 'all' = 'all', status?: FriendRequest['status']) =>
+  list: async (
+    direction: 'inbound' | 'outbound' | 'all' = 'all',
+    status?: FriendRequest['status'],
+    signal?: AbortSignal,
+  ) =>
     (
       await api.get<Page<FriendRequest>>('/api/v1/friend-requests', {
         params: { limit: 100, direction, status },
+        signal,
       })
     ).data,
   send: async (addresseeId: string) =>

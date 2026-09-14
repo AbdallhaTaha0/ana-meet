@@ -29,6 +29,10 @@ export function useLiveUpdates() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const timers = useRef(new Map<string, number>());
   const unreadTimer = useRef<number | null>(null);
+  const lastPath = useRef(location.pathname);
+  const navTimer = useRef<number | null>(null);
+  const badgesInflight = useRef(false);
+  const badgesQueued = useRef(false);
 
   const refreshUnread = useCallback(
     () =>
@@ -56,10 +60,30 @@ export function useLiveUpdates() {
         .catch(() => undefined),
     [],
   );
-  const refreshAll = useCallback(() => {
-    void refreshUnread();
-    void refreshPending();
+  const refreshAll = useCallback(async () => {
+    await Promise.all([refreshUnread(), refreshPending()]);
   }, [refreshPending, refreshUnread]);
+
+  // Rapid tab switches collapse into one trailing fetch; an overlapping
+  // fetch queues at most one follow-up instead of stacking requests.
+  const scheduleNavRefresh = useCallback(() => {
+    if (navTimer.current) window.clearTimeout(navTimer.current);
+    navTimer.current = window.setTimeout(() => {
+      navTimer.current = null;
+      if (badgesInflight.current) {
+        badgesQueued.current = true;
+        return;
+      }
+      badgesInflight.current = true;
+      void refreshAll().finally(() => {
+        badgesInflight.current = false;
+        if (badgesQueued.current) {
+          badgesQueued.current = false;
+          void refreshAll();
+        }
+      });
+    }, 500);
+  }, [refreshAll]);
 
   const pushToast = useCallback((notification: Notification) => {
     const toast: Toast = {
@@ -81,15 +105,33 @@ export function useLiveUpdates() {
   }, []);
 
   useEffect(() => {
-    refreshAll();
-    const poll = window.setInterval(refreshAll, 30000);
-    return () => window.clearInterval(poll);
+    void refreshAll();
+    // Background tabs skip polling (throttled timers would otherwise pile up
+    // a burst on return); coming back refreshes once instead.
+    const poll = window.setInterval(() => {
+      if (!document.hidden) void refreshAll();
+    }, 30000);
+    const onVisible = () => {
+      if (!document.hidden) void refreshAll();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(poll);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [refreshAll]);
 
-  // Refetch badges when navigating (e.g. back from reading notifications).
+  // Refetch badges when navigating (e.g. back from reading notifications) —
+  // debounced so rapid sidebar switching fires one trailing request, and the
+  // initial mount is skipped (the effect above already fetched).
   useEffect(() => {
-    refreshAll();
-  }, [location.pathname, refreshAll]);
+    if (location.pathname === lastPath.current) return;
+    lastPath.current = location.pathname;
+    scheduleNavRefresh();
+    return () => {
+      if (navTimer.current) window.clearTimeout(navTimer.current);
+    };
+  }, [location.pathname, scheduleNavRefresh]);
 
   useEffect(() => {
     const onNotification = ({ notification }: { notification: Notification }) => {

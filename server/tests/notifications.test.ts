@@ -246,6 +246,33 @@ describe.skipIf(!shouldRun)('notifications', () => {
     ).not.toContain(messageId);
   });
 
+  it('marks a whole conversation read with one batched request', async () => {
+    const ids = [];
+    for (let i = 0; i < 3; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      ids.push(await send(agents.alice, directId, `Batch ${i}`));
+    }
+    const before = await agents.bob.get('/api/v1/notifications').query({ unread: true });
+    for (const id of ids as string[]) {
+      expect(before.body.items.map((n: { messageId: string }) => n.messageId)).toContain(id);
+    }
+    const batch = await agents.bob.post(`/api/v1/conversations/${directId}/messages/read`).set(ajax);
+    expect(batch.status).toBe(200);
+    expect(batch.body.updated).toBeGreaterThanOrEqual(3);
+    const after = await agents.bob.get('/api/v1/notifications').query({ unread: true });
+    for (const id of ids as string[]) {
+      expect(after.body.items.map((n: { messageId: string }) => n.messageId)).not.toContain(id);
+    }
+    // Repeating is a harmless no-op.
+    expect(
+      (await agents.bob.post(`/api/v1/conversations/${directId}/messages/read`).set(ajax)).body.updated,
+    ).toBe(0);
+    // Outsiders get no oracle.
+    expect(
+      (await agents.carol.post(`/api/v1/conversations/${directId}/messages/read`).set(ajax)).status,
+    ).toBe(404);
+  });
+
   it('dismisses own notifications only', async () => {    const list = await agents.carol.get('/api/v1/notifications');
     const ownId = list.body.items[0].id as string;
     expect((await agents.carol.delete(`/api/v1/notifications/${ownId}`).set(ajax)).status).toBe(

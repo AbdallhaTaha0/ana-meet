@@ -11,6 +11,11 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       autoConnect: false,
       withCredentials: true,
       reconnection: true,
+      // Gentle backoff: a dying transport must not spin hot reconnects that
+      // flood the server (and the console) with failed polling handshakes.
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
     }),
   );
 
@@ -21,14 +26,17 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     };
     const failed = (cause: Error) => {
       if (cause.message !== 'UNAUTHORIZED' || authRetry) return;
+      // Another tab, a manual reconnect, or engine.io's own retry may
+      // already be (re)connecting — never stack a parallel handshake.
+      if (socket.active || socket.connected) return;
       authRetry = true;
       void refreshUser().then((restored) => {
-        if (restored) socket.connect();
+        if (restored && !socket.active && !socket.connected) socket.connect();
       });
     };
     socket.on('connect', connected);
     socket.on('connect_error', failed);
-    socket.connect();
+    if (!socket.active && !socket.connected) socket.connect();
     const heartbeat = window.setInterval(() => {
       if (socket.connected) socket.emit('presence:heartbeat', {}, () => undefined);
     }, 30000);

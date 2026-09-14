@@ -2,10 +2,10 @@ import { api } from '../../shared/api';
 import type { Conversation, CursorPage, Message, Page, Upload, UserCard } from '../../shared/types';
 
 export const conversationsApi = {
-  list: async () =>
-    (await api.get<Page<Conversation>>('/api/v1/conversations', { params: { limit: 100 } })).data,
-  detail: async (id: string) =>
-    (await api.get<{ conversation: Conversation }>(`/api/v1/conversations/${id}`)).data
+  list: async (signal?: AbortSignal) =>
+    (await api.get<Page<Conversation>>('/api/v1/conversations', { params: { limit: 100 }, signal })).data,
+  detail: async (id: string, signal?: AbortSignal) =>
+    (await api.get<{ conversation: Conversation }>(`/api/v1/conversations/${id}`, { signal })).data
       .conversation,
   direct: async (peerId: string) =>
     (await api.post<{ conversation: Conversation }>('/api/v1/conversations/direct', { peerId }))
@@ -17,10 +17,11 @@ export const conversationsApi = {
         memberIds,
       })
     ).data.conversation,
-  messages: async (id: string, cursor?: string) =>
+  messages: async (id: string, cursor?: string, signal?: AbortSignal) =>
     (
       await api.get<CursorPage<Message>>(`/api/v1/conversations/${id}/messages`, {
         params: { limit: 40, cursor },
+        signal,
       })
     ).data,
   send: async (id: string, body: object) =>
@@ -36,6 +37,8 @@ export const conversationsApi = {
     api.delete(`/api/v1/conversations/${id}/messages/${messageId}`),
   read: async (id: string, messageId: string) =>
     api.post(`/api/v1/conversations/${id}/messages/${messageId}/status`, { status: 'READ' }),
+  readAll: async (id: string) =>
+    (await api.post<{ updated: number }>(`/api/v1/conversations/${id}/messages/read`)).data,
   hide: async (id: string) =>
     (await api.post<{ hidden: boolean }>(`/api/v1/conversations/${id}/hide`)).data,
   unhide: async (id: string) =>

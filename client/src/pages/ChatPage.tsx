@@ -9,7 +9,8 @@ import { conversationsApi } from '../features/conversations/service';
 import { useChatRealtime } from '../features/conversations/useChatRealtime';
 import { useMessageActions } from '../features/conversations/useMessageActions';
 import { useThread } from '../features/conversations/useThread';
-import { errorMessage } from '../shared/api';
+import { errorMessage, isRequestAbort } from '../shared/api';
+import { readFetchCache, writeFetchCache } from '../shared/fetchCache';
 import type { Conversation } from '../shared/types';
 import { ErrorNotice } from '../shared/ui';
 
@@ -29,16 +30,30 @@ export function ChatPage() {
   const [groupTitle, setGroupTitle] = useState('');
   const refreshList = useCallback(async () => {
     const page = await conversationsApi.list();
+    writeFetchCache('conversations:list', page.items);
     setConversations(page.items);
   }, []);
   useEffect(() => {
     let live = true;
+    // Spam-clicking tabs reuses the seconds-old list; socket events and
+    // mutations always refresh it fresh via refreshList.
+    const cached = readFetchCache<Conversation[]>('conversations:list');
+    if (cached) {
+      setConversations(cached);
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
     conversationsApi
-      .list()
+      .list(controller.signal)
       .then((page) => {
-        if (live) setConversations(page.items);
+        if (live) {
+          writeFetchCache('conversations:list', page.items);
+          setConversations(page.items);
+        }
       })
       .catch((cause) => {
+        if (isRequestAbort(cause)) return;
         if (live) setError(errorMessage(cause));
       })
       .finally(() => {
@@ -46,6 +61,7 @@ export function ChatPage() {
       });
     return () => {
       live = false;
+      controller.abort();
     };
   }, []);
   useEffect(() => {
@@ -102,16 +118,19 @@ export function ChatPage() {
   }
   // Close chat: hides it from my sidebar on every device. Membership and
   // history stay intact — a new message (or starting the chat again) reopens it.
-  async function closeChat(id: string) {
-    try {
-      setError('');
-      await conversationsApi.hide(id);
-      await refreshList();
-      if (id === conversationId) navigate('/app/chats');
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  }
+  const closeChat = useCallback(
+    async (id: string) => {
+      try {
+        setError('');
+        await conversationsApi.hide(id);
+        await refreshList();
+        if (id === conversationId) navigate('/app/chats');
+      } catch (cause) {
+        setError(errorMessage(cause));
+      }
+    },
+    [conversationId, navigate, refreshList],
+  );
   return (
     <div className="grid h-full min-h-0 grid-cols-1 bg-white md:grid-cols-[minmax(260px,340px)_minmax(0,1fr)]">
       <ConversationList
@@ -121,9 +140,7 @@ export function ChatPage() {
         onSearch={setSearch}
         loading={loading}
         onNew={() => setCreating(true)}
-        onClose={(id) => {
-          void closeChat(id);
-        }}
+        onClose={closeChat}
       />
       <ThreadView
         conversationId={conversationId}

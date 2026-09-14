@@ -1,8 +1,63 @@
+import { memo } from 'react';
 import { BellOff, MessageCircle, Plus, Search, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { Conversation } from '../../shared/types';
 import { Avatar, Button, EmptyState, IconButton } from '../../shared/ui';
 import { conversationName } from './display';
+
+const ConversationRow = memo(function ConversationRow({
+  item,
+  active,
+  onClose,
+}: {
+  item: Conversation;
+  active: boolean;
+  onClose: (id: string) => void;
+}) {
+  const name = conversationName(item);
+  return (
+    <div
+      className={`cv-row flex min-h-20 items-center gap-1 rounded-2xl px-2 py-2 transition hover:bg-paper ${active ? 'bg-mist ring-1 ring-sea/10' : ''}`}
+    >
+      <Link to={`/app/chats/${item.id}`} className="flex min-w-0 flex-1 items-center gap-3 px-1">
+        <Avatar name={name} />
+        <span className="min-w-0 flex-1">
+          <strong className="flex items-center gap-2 font-display text-[15px] font-semibold">
+            <span className="block truncate">{name}</span>
+            {item.unreadCount > 0 && (
+              <span
+                aria-label={`${item.unreadCount} unread messages`}
+                className="grid min-h-5 min-w-5 shrink-0 place-items-center rounded-full bg-sea px-1.5 text-[11px] font-bold text-white"
+              >
+                {item.unreadCount > 99 ? '99+' : item.unreadCount}
+              </span>
+            )}
+            {item.muted && (
+              <span aria-label="Muted" title="Muted">
+                <BellOff size={14} className="shrink-0 text-muted" />
+              </span>
+            )}
+          </strong>
+          <small className="block truncate text-xs text-muted">
+            {item.type === 'GROUP'
+              ? `${item.memberCount} members`
+              : item.peer?.username
+                ? `@${item.peer.username}`
+                : 'Direct chat'}
+          </small>
+        </span>
+        <time className="self-start pt-2 text-[11px] text-muted">
+          {new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(
+            new Date(item.updatedAt),
+          )}
+        </time>
+      </Link>
+      <IconButton label={`Close chat with ${name}`} onClick={() => onClose(item.id)}>
+        <X size={17} />
+      </IconButton>
+    </div>
+  );
+});
 
 export function ConversationList({
   conversations,
@@ -76,53 +131,12 @@ export function ConversationList({
       ) : (
         <div className="min-h-0 space-y-1 overflow-y-auto px-3">
           {filtered.map((item) => (
-            <div
+            <ConversationRow
               key={item.id}
-              className={`flex min-h-20 items-center gap-1 rounded-2xl px-2 py-2 transition hover:bg-paper ${conversationId === item.id ? 'bg-mist ring-1 ring-sea/10' : ''}`}
-            >
-            <Link
-              to={`/app/chats/${item.id}`}
-              className="flex min-w-0 flex-1 items-center gap-3 px-1"
-            >
-              <Avatar name={conversationName(item)} />
-              <span className="min-w-0 flex-1">
-                <strong className="flex items-center gap-2 font-display text-[15px] font-semibold">
-                  <span className="block truncate">{conversationName(item)}</span>
-                  {item.unreadCount > 0 && (
-                    <span
-                      aria-label={`${item.unreadCount} unread messages`}
-                      className="grid min-h-5 min-w-5 shrink-0 place-items-center rounded-full bg-sea px-1.5 text-[11px] font-bold text-white"
-                    >
-                      {item.unreadCount > 99 ? '99+' : item.unreadCount}
-                    </span>
-                  )}
-                  {item.muted && (
-                    <span aria-label="Muted" title="Muted">
-                      <BellOff size={14} className="shrink-0 text-muted" />
-                    </span>
-                  )}
-                </strong>
-                <small className="block truncate text-xs text-muted">
-                  {item.type === 'GROUP'
-                    ? `${item.memberCount} members`
-                    : item.peer?.username
-                      ? `@${item.peer.username}`
-                      : 'Direct chat'}
-                </small>
-              </span>
-              <time className="self-start pt-2 text-[11px] text-muted">
-                {new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(
-                  new Date(item.updatedAt),
-                )}
-              </time>
-            </Link>
-              <IconButton
-                label={`Close chat with ${conversationName(item)}`}
-                onClick={() => onClose(item.id)}
-              >
-                <X size={17} />
-              </IconButton>
-            </div>
+              item={item}
+              active={conversationId === item.id}
+              onClose={onClose}
+            />
           ))}
         </div>
       )}

@@ -38,9 +38,14 @@ api.interceptors.response.use(undefined, async (error: AxiosError) => {
   return Promise.reject(error);
 });
 
+export function isRequestAbort(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.code === 'ERR_CANCELED';
+}
 export function errorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     if (!error.response) return 'Could not connect. Check your connection and try again.';
+    if (error.response.status === 429)
+      return 'Too many requests — slow down for a moment and try again.';
     const body = error.response.data as { error?: { message?: string } } | undefined;
     return body?.error?.message || `Request failed (${error.response.status}). Please try again.`;
   }

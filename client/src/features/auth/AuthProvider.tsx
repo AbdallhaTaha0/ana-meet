@@ -3,12 +3,14 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from 'react';
 import axios from 'axios';
 import { api } from '../../shared/api';
+import { clearFetchCache } from '../../shared/fetchCache';
 import type { CurrentUser } from '../../shared/types';
 
 interface AuthContextValue {
@@ -26,6 +28,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const requestId = useRef(0);
   const setUser = useCallback((nextUser: CurrentUser | null) => {
     requestId.current += 1;
+    clearFetchCache();
     setUserState(nextUser);
     setLoading(false);
   }, []);
@@ -54,18 +57,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.addEventListener('ana-auth-expired', expired);
     return () => window.removeEventListener('ana-auth-expired', expired);
   }, [refreshUser]);
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       await api.post('/api/v1/auth/logout');
     } finally {
       setUser(null);
     }
-  };
-  return (
-    <AuthContext.Provider value={{ user, loading, setUser, refreshUser, logout }}>
-      {children}
-    </AuthContext.Provider>
+  }, [setUser]);
+  const value = useMemo<AuthContextValue>(
+    () => ({ user, loading, setUser, refreshUser, logout }),
+    [user, loading, setUser, refreshUser, logout],
   );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth(): AuthContextValue {

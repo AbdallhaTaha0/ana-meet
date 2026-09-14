@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type RefObject } from 'react';
 import type { Socket } from 'socket.io-client';
 import { errorMessage } from '../../shared/api';
 import { useConfirm } from '../../shared/ConfirmDialog';
@@ -30,16 +30,16 @@ export function useMessageActions(
     if (conversationId)
       socket.current?.emit(value ? 'typing:start' : 'typing:stop', { conversationId });
   };
-  const startEdit = (message: Message) => {
+  const startEdit = useCallback((message: Message) => {
     setEditing(message);
     setReply(null);
     setDraft(message.content || '');
-  };
-  const cancelContext = () => {
+  }, []);
+  const cancelContext = useCallback(() => {
     setReply(null);
     setEditing(null);
     setDraft('');
-  };
+  }, []);
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!conversationId || !draft.trim() || busy) return;
@@ -99,22 +99,25 @@ export function useMessageActions(
       setBusy(false);
     }
   }
-  async function remove(message: Message) {
-    if (!conversationId) return;
-    const ok = await confirm({
-      title: 'Delete message?',
-      description: 'This message will be permanently deleted for everyone in this chat.',
-      confirmLabel: 'Delete',
-      danger: true,
-    });
-    if (!ok) return;
-    try {
-      await conversationsApi.remove(conversationId, message.id);
-      removeLocal(message.id);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  }
+  const remove = useCallback(
+    async (message: Message) => {
+      if (!conversationId) return;
+      const ok = await confirm({
+        title: 'Delete message?',
+        description: 'This message will be permanently deleted for everyone in this chat.',
+        confirmLabel: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await conversationsApi.remove(conversationId, message.id);
+        removeLocal(message.id);
+      } catch (cause) {
+        setError(errorMessage(cause));
+      }
+    },
+    [confirm, conversationId, removeLocal],
+  );
   return {
     draft,
     reply,

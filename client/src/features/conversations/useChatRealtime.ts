@@ -120,7 +120,9 @@ export function useChatRealtime(
     client.on('conversation:deleted', conversationGone);
     client.on('conversation:hidden', conversationGone);
     if (client.connected) connected();
-    const poll = window.setInterval(checkPresence, 30000);
+    const poll = window.setInterval(() => {
+      if (!document.hidden) checkPresence();
+    }, 30000);
     return () => {
       window.clearInterval(poll);
       if (listTimer.current) window.clearTimeout(listTimer.current);
@@ -147,6 +149,5 @@ export function useChatRealtime(
         if (current.current.peerId === peerId) setOnline(Boolean(answer.online));
       });
   }, [client, conversationId, peerId]);
-
   return { socket, typing, online };
 }
