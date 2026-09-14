@@ -30,17 +30,55 @@ export function NotificationsPage() {
     setCursor(data.nextCursor);
   };
   useEffect(() => {
-    const reload = () => {
-      void load().catch((cause) => setError(errorMessage(cause)));
+    let live = true;
+    // Opening the page means seen: load, then clear the whole stack so the
+    // sidebar badge drops and dots don't linger after reading.
+    const open = async () => {
+      try {
+        await load();
+        await api.post('/api/v1/notifications/read-all');
+        if (!live) return;
+        setItems((old) =>
+          old.map((row) => ({ ...row, readAt: row.readAt || new Date().toISOString() })),
+        );
+        window.dispatchEvent(new Event('ana-notifications-seen'));
+      } catch (cause) {
+        if (live) setError(errorMessage(cause));
+      }
     };
-    reload();
+    void open();
+    const reload = () => {
+      void load().catch((cause) => {
+        if (live) setError(errorMessage(cause));
+      });
+    };
     socket.on('connect', reload);
     const received = ({ notification }: { notification: Notification }) => {
       arrivals.current.set(notification.id, notification);
-      setItems((old) => [notification, ...old.filter((item) => item.id !== notification.id)]);
+      setItems((old) => [
+        { ...notification },
+        ...old.filter((item) => item.id !== notification.id),
+      ]);
+      // The page is open, so arrivals are seen immediately — don't let them
+      // pile up as unread behind the user's back.
+      void api
+        .post('/api/v1/notifications/read', { ids: [notification.id] })
+        .then(() => {
+          if (!live) return;
+          setItems((old) =>
+            old.map((row) =>
+              row.id === notification.id
+                ? { ...row, readAt: row.readAt || new Date().toISOString() }
+                : row,
+            ),
+          );
+          window.dispatchEvent(new Event('ana-notifications-seen'));
+        })
+        .catch(() => undefined);
     };
     socket.on('notification:new', received);
     return () => {
+      live = false;
       socket.off('connect', reload);
       socket.off('notification:new', received);
     };
@@ -52,6 +90,7 @@ export function NotificationsPage() {
         old.map((row) => (row.id === item.id ? { ...row, readAt: new Date().toISOString() } : row)),
       );
       if (item.conversationId) navigate(`/app/chats/${item.conversationId}`);
+      else if (/friend request/i.test(item.title)) navigate('/app/people');
     } catch (cause) {
       setError(errorMessage(cause));
     }

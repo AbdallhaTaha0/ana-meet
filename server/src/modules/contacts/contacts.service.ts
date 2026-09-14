@@ -1,6 +1,7 @@
 import { Errors } from '../../common/errors';
 import { UniqueConstraintError } from 'sequelize';
 import { Contact, User } from '../../db/models';
+import { emitToUserRooms } from '../../realtime/bus';
 import { assertNotBlocked, toUserCard, type UserCard } from '../blocks/blocks.service';
 
 export async function addContact(
@@ -29,6 +30,7 @@ export async function addContact(
     if (!(err instanceof UniqueConstraintError)) throw err;
     created = false;
   }
+  emitToUserRooms([ownerId], 'contact:updated', {});
   return { contact: toUserCard(target), created };
 }
 
@@ -62,4 +64,5 @@ export async function listContacts(
 export async function removeContact(ownerId: string, contactUserId: string): Promise<void> {
   // Idempotent: removing a non-contact is a no-op.
   await Contact.destroy({ where: { userId: ownerId, contactUserId } });
+  emitToUserRooms([ownerId], 'contact:updated', {});
 }

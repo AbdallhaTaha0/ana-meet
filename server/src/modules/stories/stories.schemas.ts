@@ -24,6 +24,8 @@ const mediaStorySchema = z.object({
     }),
   mimeType: z.string().max(128),
   sizeBytes: z.number().int().positive(),
+  // Optional caption so text + image/video is a single story, never two.
+  content: z.string().trim().max(500).optional(),
 });
 
 export const createStorySchema = z

@@ -3,10 +3,12 @@ import { Errors } from '../../common/errors';
 import {
   Conversation,
   ConversationParticipant,
+  Notification,
   User,
   type ParticipantRole,
 } from '../../db/models';
 import { getSequelize } from '../../db/sequelize';
+import { emitToUserRooms } from '../../realtime/bus';
 import {
   assertNotBlocked,
   toUserCard,
@@ -14,6 +16,14 @@ import {
 } from '../blocks/blocks.service';
 
 export const GROUP_MAX_MEMBERS = 200;
+
+async function currentMemberIds(conversationId: string): Promise<string[]> {
+  const rows = await ConversationParticipant.findAll({
+    where: { conversationId },
+    attributes: ['userId'],
+  });
+  return rows.map((r) => r.userId);
+}
 
 export interface ParticipantView {
   userId: string;
@@ -29,6 +39,7 @@ export interface ConversationDetail {
   peer: UserCard | null;
   memberCount: number;
   myRole: ParticipantRole;
+  muted: boolean;
   participants: ParticipantView[];
   createdAt: Date;
   updatedAt: Date;
@@ -41,6 +52,8 @@ export interface ConversationSummary {
   peer: UserCard | null;
   memberCount: number;
   myRole: ParticipantRole;
+  muted: boolean;
+  unreadCount: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -60,6 +73,7 @@ function toDetail(
   participants: ConversationParticipant[],
   myRole: ParticipantRole,
   viewerId: string,
+  muted: boolean,
 ): ConversationDetail {
   const peer = conversation.type === 'DIRECT'
     ? participants.find((participant) => participant.userId !== viewerId)
@@ -72,6 +86,7 @@ function toDetail(
     peer: peerUser ? toUserCard(peerUser) : null,
     memberCount: participants.length,
     myRole,
+    muted,
     participants: participants.map(toParticipantView),
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
@@ -190,7 +205,13 @@ export async function createDirectConversation(
             const participants = await loadParticipants(conversation.id, tx);
             const myRole =
               participants.find((p) => p.userId === creatorId)?.role ?? ('MEMBER' as ParticipantRole);
-            return { conversation: toDetail(conversation, participants, myRole, creatorId), created: false };
+            // Reopening: starting (or re-starting) a DM unhides it.
+            await ConversationParticipant.update(
+              { hidden: false },
+              { where: { conversationId: conversation.id, userId: creatorId }, transaction: tx },
+            );
+            const muted = participants.find((p) => p.userId === creatorId)?.muted ?? false;
+            return { conversation: toDetail(conversation, participants, myRole, creatorId, muted), created: false };
           }
         }
       }
@@ -208,7 +229,15 @@ export async function createDirectConversation(
       { transaction: tx },
     );
     const participants = await loadParticipants(conversation.id, tx);
-    return { conversation: toDetail(conversation, participants, 'MEMBER', creatorId), created: true };
+    return { conversation: toDetail(conversation, participants, 'MEMBER', creatorId, false), created: true };
+  }).then((result) => {
+    if (result.created) {
+      emitToUserRooms([creatorId, peerId], 'conversation:new', {
+        conversationId: result.conversation.id,
+        type: 'DIRECT',
+      });
+    }
+    return result;
   });
 }
 
@@ -248,7 +277,14 @@ export async function createGroupConversation(
       { transaction: tx },
     );
     const participants = await loadParticipants(conversation.id, tx);
-    return { conversation: toDetail(conversation, participants, 'OWNER', creatorId), created: true };
+    return { conversation: toDetail(conversation, participants, 'OWNER', creatorId, false), created: true };
+  }).then((result) => {
+    emitToUserRooms(
+      [creatorId, ...unique],
+      'conversation:new',
+      { conversationId: result.conversation.id, type: 'GROUP' },
+    );
+    return result;
   });
 }
 
@@ -259,8 +295,10 @@ export async function listMyConversations(
   limit: number,
   offset: number,
 ): Promise<{ items: ConversationSummary[]; total: number }> {
+  // Closed chats stay hidden until a new message (or explicit reopen) brings
+  // them back. Membership and history are untouched by hiding.
   const { rows: memberships, count: total } = await ConversationParticipant.findAndCountAll({
-    where: { userId },
+    where: { userId, hidden: false },
     include: [{ model: Conversation, as: 'conversation' }],
     order: [[{ model: Conversation, as: 'conversation' }, 'updatedAt', 'DESC']],
     limit,
@@ -287,6 +325,26 @@ export async function listMyConversations(
     grouped.set(p.conversationId, list);
   }
 
+  // Unread per conversation = unread MESSAGE notifications for this viewer.
+  // One grouped query (no N+1); dismissed rows simply stop counting.
+  const unreadByConversation = new Map<string, number>();
+  if (conversations.length > 0) {
+    const counts = (await Notification.findAll({
+      where: {
+        recipientId: userId,
+        type: 'MESSAGE',
+        readAt: null,
+        conversationId: { [Op.in]: [...byId.keys()] },
+      },
+      attributes: ['conversationId'],
+    })) as Notification[];
+    for (const row of counts) {
+      if (row.conversationId) {
+        unreadByConversation.set(row.conversationId, (unreadByConversation.get(row.conversationId) ?? 0) + 1);
+      }
+    }
+  }
+
   const items = memberships.map((m) => {
     const conversation = byId.get(m.conversationId);
     if (!conversation) throw Errors.notFound('Conversation not found');
@@ -303,6 +361,8 @@ export async function listMyConversations(
       peer: peerUser ? toUserCard(peerUser) : null,
       memberCount: participants.length,
       myRole: m.role,
+      muted: m.muted,
+      unreadCount: unreadByConversation.get(conversation.id) ?? 0,
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
     };
@@ -316,7 +376,71 @@ export async function getConversationDetail(
 ): Promise<ConversationDetail> {
   const { conversation, membership } = await requireMembership(userId, conversationId);
   const participants = await loadParticipants(conversation.id);
-  return toDetail(conversation, participants, membership.role, userId);
+  return toDetail(conversation, participants, membership.role, userId, membership.muted);
+}
+
+// --- Mute / unmute (WhatsApp semantics) ---
+
+// Muting stops notification pushes for this member only. Rows and unread
+// counters keep working, so a muted chat still shows its count — just
+// silently. Message delivery (message:new) is unaffected.
+export async function muteConversation(
+  userId: string,
+  conversationId: string,
+): Promise<{ muted: boolean }> {
+  const { membership } = await requireMembership(userId, conversationId);
+  if (!membership.muted) {
+    membership.muted = true;
+    await membership.save();
+  }
+  emitToUserRooms([userId], 'conversation:updated', { conversationId });
+  return { muted: true };
+}
+
+export async function unmuteConversation(
+  userId: string,
+  conversationId: string,
+): Promise<{ muted: boolean }> {
+  const { membership } = await requireMembership(userId, conversationId);
+  if (membership.muted) {
+    membership.muted = false;
+    await membership.save();
+  }
+  emitToUserRooms([userId], 'conversation:updated', { conversationId });
+  return { muted: false };
+}
+
+// --- Close / reopen (hide from my list only) ---
+
+// Closing keeps membership and history: the chat disappears from this
+// member's list on every device. Works for DIRECT (which cannot be left)
+// and GROUP alike. Blocking, unfriending, or removing a contact never
+// auto-closes — the user closes explicitly.
+export async function hideConversation(
+  userId: string,
+  conversationId: string,
+): Promise<{ hidden: boolean }> {
+  const { membership } = await requireMembership(userId, conversationId);
+  if (!membership.hidden) {
+    membership.hidden = true;
+    await membership.save();
+  }
+  emitToUserRooms([userId], 'conversation:hidden', { conversationId });
+  return { hidden: true };
+}
+
+export async function unhideConversation(
+  userId: string,
+  conversationId: string,
+): Promise<{ hidden: boolean }> {
+  const { membership } = await requireMembership(userId, conversationId);
+  if (membership.hidden) {
+    membership.hidden = false;
+    await membership.save();
+  }
+  const ids = await currentMemberIds(conversationId);
+  emitToUserRooms(ids, 'conversation:updated', { conversationId });
+  return { hidden: false };
 }
 
 // --- Membership management (groups only) ---
@@ -357,6 +481,10 @@ export async function addMembers(
     if (!(err instanceof UniqueConstraintError)) throw err;
     return { added: [] };
   }
+  const remaining = await currentMemberIds(conversationId);
+  emitToUserRooms(remaining, 'conversation:updated', { conversationId });
+  // Added members get a new-conversation hint so the group appears live.
+  emitToUserRooms(fresh, 'conversation:new', { conversationId, type: 'GROUP' });
   return { added: fresh.map((id) => toUserCard(byId.get(id) as User)) };
 }
 
@@ -380,11 +508,14 @@ export async function removeMember(
   }
   requireRoles(membership, ['OWNER', 'ADMIN']);
   await target.destroy();
+  const remaining = await currentMemberIds(conversationId);
+  emitToUserRooms(remaining, 'conversation:updated', { conversationId });
+  emitToUserRooms([targetId], 'conversation:removed', { conversationId });
 }
 
 export async function leaveConversation(userId: string, conversationId: string): Promise<{ deleted: boolean }> {
   const sequelize = getSequelize();
-  return sequelize.transaction(async (tx) => {
+  const result = await sequelize.transaction(async (tx) => {
     const { conversation, membership } = await requireMembership(userId, conversationId, tx);
     requireGroup(conversation);
     const others = await ConversationParticipant.findAll({
@@ -411,6 +542,14 @@ export async function leaveConversation(userId: string, conversationId: string):
     }
     return { deleted: false };
   });
+  if (result.deleted) {
+    emitToUserRooms([userId], 'conversation:deleted', { conversationId });
+  } else {
+    const remaining = await currentMemberIds(conversationId);
+    emitToUserRooms(remaining, 'conversation:updated', { conversationId });
+    emitToUserRooms([userId], 'conversation:removed', { conversationId });
+  }
+  return result;
 }
 
 export async function renameGroup(
@@ -424,7 +563,9 @@ export async function renameGroup(
   conversation.title = title;
   await conversation.save();
   const participants = await loadParticipants(conversation.id);
-  return toDetail(conversation, participants, membership.role, requesterId);
+  const detail = toDetail(conversation, participants, membership.role, requesterId, membership.muted);
+  emitToUserRooms(participants.map((p) => p.userId), 'conversation:updated', { conversationId });
+  return detail;
 }
 
 export async function transferOwnership(
@@ -439,7 +580,7 @@ export async function transferOwnership(
     if (membership.role !== 'OWNER') throw Errors.forbidden('Only the owner can transfer ownership');
     if (targetId === requesterId) {
       const participants = await loadParticipants(conversation.id, tx);
-      return toDetail(conversation, participants, membership.role, requesterId);
+      return toDetail(conversation, participants, membership.role, requesterId, membership.muted);
     }
     const target = await ConversationParticipant.findOne({
       where: { conversationId, userId: targetId },
@@ -452,6 +593,11 @@ export async function transferOwnership(
     await target.save({ transaction: tx });
     await membership.save({ transaction: tx });
     const participants = await loadParticipants(conversation.id, tx);
-    return toDetail(conversation, participants, 'ADMIN', requesterId);
+    return toDetail(conversation, participants, 'ADMIN', requesterId, membership.muted);
+  }).then((detail) => {
+    void currentMemberIds(conversationId)
+      .then((ids) => emitToUserRooms(ids, 'conversation:updated', { conversationId }))
+      .catch(() => undefined);
+    return detail;
   });
 }

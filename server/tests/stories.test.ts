@@ -138,8 +138,7 @@ describe.skipIf(!shouldRun)('stories', () => {
     );
   });
 
-  it('deletes own stories only', async () => {
-    const created = await agents.carol.post('/api/v1/stories').set(ajax).send({
+  it('deletes own stories only', async () => {    const created = await agents.carol.post('/api/v1/stories').set(ajax).send({
       type: 'TEXT',
       content: 'Delete me',
     });
@@ -157,5 +156,18 @@ describe.skipIf(!shouldRun)('stories', () => {
     expect(swept).toBeGreaterThanOrEqual(1);
     expect(await Story.count()).toBe(before - swept);
     expect(await deleteExpiredStories()).toBe(0);
+  });
+
+  it('stores text + media as one captioned story', async () => {
+    const res = await agents.alice.post('/api/v1/stories').set(ajax).send({
+      type: 'IMAGE',
+      mediaUrl: 'https://cdn.example.com/s.png',
+      mimeType: 'image/png',
+      sizeBytes: 100,
+      content: 'Sunset caption',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.story.content).toBe('Sunset caption');
+    expect(res.body.story.media).not.toBeNull();
   });
 });

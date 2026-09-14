@@ -9,6 +9,7 @@ interface Handlers {
   add: (message: Message) => void;
   remove: (messageId: string) => void;
   status: (messageId: string, status: Message['status']) => void;
+  conversationGone?: (conversationId: string) => void;
 }
 
 export function useChatRealtime(
@@ -23,6 +24,17 @@ export function useChatRealtime(
   current.current = { conversationId, peerId, userId, handlers };
   const [typing, setTyping] = useState('');
   const [online, setOnline] = useState(false);
+  const listTimer = useRef<number | null>(null);
+
+  // Read receipts arrive per message (one event each when a thread opens) —
+  // debounce the list refetch so unread pills settle without a request storm.
+  const scheduleListRefresh = () => {
+    if (listTimer.current) window.clearTimeout(listTimer.current);
+    listTimer.current = window.setTimeout(() => {
+      listTimer.current = null;
+      void current.current.handlers.refreshList().catch(() => undefined);
+    }, 1200);
+  };
 
   useEffect(() => {
     const checkPresence = () => {
@@ -66,6 +78,8 @@ export function useChatRealtime(
       status: Message['status'];
     }) => {
       if (id === current.current.conversationId) current.current.handlers.status(messageId, next);
+      // A read somewhere (possibly me on another tab) changes unread pills.
+      scheduleListRefresh();
     };
     const typingUpdate = ({
       conversationId: id,
@@ -79,6 +93,20 @@ export function useChatRealtime(
       if (id === current.current.conversationId && sender !== current.current.userId)
         setTyping(isTyping ? 'Typing…' : '');
     };
+    // Live conversation list: any membership change refetches. If the open
+    // thread was removed/deleted, redirect out instead of showing stale members.
+    const conversationHint = ({ conversationId: id }: { conversationId: string }) => {
+      void current.current.handlers.refreshList().catch(() => undefined);
+      if (id && id === current.current.conversationId) {
+        void current.current.handlers.refreshThread().catch(() => undefined);
+      }
+    };
+    const conversationGone = ({ conversationId: id }: { conversationId: string }) => {
+      void current.current.handlers.refreshList().catch(() => undefined);
+      if (id && id === current.current.conversationId) {
+        current.current.handlers.conversationGone?.(id);
+      }
+    };
     client.on('connect', connected);
     client.on('disconnect', disconnected);
     client.on('message:new', added);
@@ -86,10 +114,16 @@ export function useChatRealtime(
     client.on('message:deleted', deleted);
     client.on('message:status', status);
     client.on('typing:update', typingUpdate);
+    client.on('conversation:new', conversationHint);
+    client.on('conversation:updated', conversationHint);
+    client.on('conversation:removed', conversationGone);
+    client.on('conversation:deleted', conversationGone);
+    client.on('conversation:hidden', conversationGone);
     if (client.connected) connected();
     const poll = window.setInterval(checkPresence, 30000);
     return () => {
       window.clearInterval(poll);
+      if (listTimer.current) window.clearTimeout(listTimer.current);
       client.off('connect', connected);
       client.off('disconnect', disconnected);
       client.off('message:new', added);
@@ -97,6 +131,11 @@ export function useChatRealtime(
       client.off('message:deleted', deleted);
       client.off('message:status', status);
       client.off('typing:update', typingUpdate);
+      client.off('conversation:new', conversationHint);
+      client.off('conversation:updated', conversationHint);
+      client.off('conversation:removed', conversationGone);
+      client.off('conversation:deleted', conversationGone);
+      client.off('conversation:hidden', conversationGone);
     };
   }, [client]);
 

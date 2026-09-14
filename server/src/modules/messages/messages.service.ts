@@ -1,7 +1,7 @@
 import { Op, UniqueConstraintError } from 'sequelize';
 import { Errors } from '../../common/errors';
 import { decodeCursor, encodeCursor } from '../../common/cursor';
-import { Conversation, ConversationParticipant, Message, User, type MessageStatus } from '../../db/models';
+import { Conversation, ConversationParticipant, Message, Notification, User, type MessageStatus } from '../../db/models';
 import { getSequelize } from '../../db/sequelize';
 import { requireMembership } from '../conversations/conversations.service';
 import { assertNotBlocked, toUserCard, type UserCard } from '../blocks/blocks.service';
@@ -167,6 +167,11 @@ export async function sendMessage(
         "UPDATE conversations SET updated_at = GREATEST(updated_at + INTERVAL '1 millisecond', CURRENT_TIMESTAMP) WHERE id = :conversationId",
         { replacements: { conversationId }, transaction },
       );
+      // New activity reopens closed chats for every member.
+      await ConversationParticipant.update(
+        { hidden: false },
+        { where: { conversationId }, transaction },
+      );
       return message;
     });
     const view = await reloadView(created.id);
@@ -314,6 +319,18 @@ export async function advanceMessageStatus(
   if (STATUS_RANK[status] > STATUS_RANK[message.status]) {
     message.status = status;
     await message.save();
+  }
+  if (status === 'READ') {
+    // Viewing the chat clears the stack: the reader's MESSAGE notifications
+    // for this message are marked read best-effort, never failing the receipt.
+    try {
+      await Notification.update(
+        { readAt: new Date() },
+        { where: { recipientId: userId, messageId: message.id, readAt: null } },
+      );
+    } catch {
+      // Best-effort only.
+    }
   }
   return reloadView(message.id);
 }

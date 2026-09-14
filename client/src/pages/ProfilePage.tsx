@@ -62,7 +62,7 @@ export function ProfilePage() {
             required
           />
           <Field id="profile-email" label="Email" value={user?.email || ''} readOnly />
-          <small className="text-muted">Your public ID: #{user?.publicId}</small>
+          <small className="text-muted">Your public ID: {user?.publicId}</small>
           {error && <ErrorNotice message={error} />}
           {notice && (
             <p role="status" className="text-sm text-sea">

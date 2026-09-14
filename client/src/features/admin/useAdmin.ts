@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage } from '../../shared/api';
+import { useConfirm } from '../../shared/ConfirmDialog';
 import type { Page } from '../../shared/types';
 import type { AdminUser, Audit, Stats } from './types';
 
@@ -11,6 +12,7 @@ export function useAdmin() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [password, setPassword] = useState('');
+  const confirm = useConfirm();
   const load = useCallback(async () => {
     const [overview, people, logs] = await Promise.all([
       api.get<Stats>('/api/v1/admin/stats'),
@@ -30,12 +32,23 @@ export function useAdmin() {
     return () => window.clearTimeout(timer);
   }, [load]);
   async function act(person: AdminUser, action: 'disable' | 'restore' | 'delete') {
-    if (
-      !window.confirm(
-        `${action === 'delete' ? 'Permanently delete' : action === 'disable' ? 'Disable' : 'Restore'} ${person.displayName}?`,
-      )
-    )
-      return;
+    const titles = {
+      delete: `Permanently delete ${person.displayName}?`,
+      disable: `Disable ${person.displayName}?`,
+      restore: `Restore ${person.displayName}?`,
+    } as const;
+    const descriptions = {
+      delete: 'The account and its sessions vanish immediately. Peer history is preserved.',
+      disable: 'They will be logged out and unable to log in until restored.',
+      restore: 'They will be able to log in again with a fresh session.',
+    } as const;
+    const ok = await confirm({
+      title: titles[action],
+      description: descriptions[action],
+      confirmLabel: action === 'delete' ? 'Delete forever' : action === 'disable' ? 'Disable' : 'Restore',
+      danger: action !== 'restore',
+    });
+    if (!ok) return;
     setError('');
     setNotice('');
     try {

@@ -1,7 +1,7 @@
 import { Trash2 } from 'lucide-react';
-import { mediaUrl } from '../../shared/api';
 import type { Story } from '../../shared/types';
 import { Avatar, IconButton } from '../../shared/ui';
+import { useObjectMedia } from '../../shared/useObjectMedia';
 
 export function StoryCard({
   story,
@@ -12,6 +12,7 @@ export function StoryCard({
   owned: boolean;
   onDelete: () => void;
 }) {
+  const media = useObjectMedia(story.media?.url);
   return (
     <article className="rounded-xl border border-line p-5">
       <div className="flex items-center gap-3">
@@ -34,19 +35,23 @@ export function StoryCard({
         <p className="mt-5 min-h-24 break-words text-lg leading-7">{story.content}</p>
       )}
       {story.media &&
-        (story.type === 'IMAGE' ? (
+        (media.failed ? (
+          <p role="alert" className="mt-4 rounded-lg bg-mist p-3 text-sm text-muted">
+            This attachment is unavailable. It may have expired or you may not have access.
+          </p>
+        ) : media.loading || !media.src ? (
+          <p role="status" className="mt-4 rounded-lg bg-paper p-3 text-sm text-muted">
+            Loading attachment…
+          </p>
+        ) : story.type === 'IMAGE' ? (
           <img
             className="mt-4 max-h-80 w-full rounded-lg object-cover"
-            src={mediaUrl(story.media.url)}
+            src={media.src}
             alt={`Story by ${story.owner.displayName}`}
             loading="lazy"
           />
         ) : (
-          <video
-            className="mt-4 max-h-80 w-full rounded-lg"
-            controls
-            src={mediaUrl(story.media.url)}
-          />
+          <video className="mt-4 max-h-80 w-full rounded-lg" controls src={media.src} />
         ))}
     </article>
   );

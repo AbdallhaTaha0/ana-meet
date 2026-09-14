@@ -36,6 +36,14 @@ export const conversationsApi = {
     api.delete(`/api/v1/conversations/${id}/messages/${messageId}`),
   read: async (id: string, messageId: string) =>
     api.post(`/api/v1/conversations/${id}/messages/${messageId}/status`, { status: 'READ' }),
+  hide: async (id: string) =>
+    (await api.post<{ hidden: boolean }>(`/api/v1/conversations/${id}/hide`)).data,
+  unhide: async (id: string) =>
+    (await api.post<{ hidden: boolean }>(`/api/v1/conversations/${id}/unhide`)).data,
+  mute: async (id: string) =>
+    (await api.post<{ muted: boolean }>(`/api/v1/conversations/${id}/mute`)).data,
+  unmute: async (id: string) =>
+    (await api.post<{ muted: boolean }>(`/api/v1/conversations/${id}/unmute`)).data,
   search: async (q: string) =>
     (await api.get<{ items: UserCard[] }>('/api/v1/users/search', { params: { q } })).data.items,
   upload: async (file: File) => {

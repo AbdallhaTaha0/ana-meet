@@ -193,8 +193,60 @@ describe.skipIf(!shouldRun)('notifications', () => {
     expect((await agents.bob.get('/api/v1/notifications/unread-count')).body.count).toBe(0);
   });
 
-  it('dismisses own notifications only', async () => {
-    const list = await agents.carol.get('/api/v1/notifications');
+  it('suppresses pushes for muted chats but still records them', async () => {
+    await agents.carol.post(`/api/v1/conversations/${groupId}/mute`).set(ajax);
+    const carol = await new Promise<ClientSocket>((resolve, reject) => {
+      const s = ioClient(baseUrl, { auth: { token: tokens.carol }, reconnection: false });
+      s.on('connect', () => resolve(s));
+      s.on('connect_error', reject);
+    });
+    try {
+      let pushed = false;
+      carol.on('notification:new', () => {
+        pushed = true;
+      });
+      const messageId = await send(agents.alice, groupId, 'Muted ping');
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      expect(pushed).toBe(false);
+      // Durable + counted, just silent.
+      const unread = await agents.carol.get('/api/v1/notifications').query({ unread: true });
+      expect(unread.body.items.map((n: { messageId: string }) => n.messageId)).toContain(messageId);
+
+      await agents.carol.post(`/api/v1/conversations/${groupId}/unmute`).set(ajax);
+      const incoming = new Promise<unknown>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('notification timeout')), 5000);
+        carol.once('notification:new', (p: unknown) => {
+          clearTimeout(timer);
+          resolve(p);
+        });
+      });
+      await send(agents.alice, groupId, 'Unmuted ping');
+      const payload = (await incoming) as { notification: { actor: { username: string } } };
+      expect(payload.notification.actor.username).toBe('alice');
+    } finally {
+      carol.disconnect();
+    }
+  });
+
+  it('clears message notifications when the chat is read', async () => {    const messageId = await send(agents.alice, directId, 'Read me please');
+    const before = await agents.bob.get('/api/v1/notifications').query({ unread: true });
+    expect(
+      before.body.items.map((n: { messageId: string }) => n.messageId),
+    ).toContain(messageId);
+
+    const receipt = await agents.bob
+      .post(`/api/v1/conversations/${directId}/messages/${messageId}/status`)
+      .set(ajax)
+      .send({ status: 'READ' });
+    expect(receipt.status).toBe(200);
+
+    const after = await agents.bob.get('/api/v1/notifications').query({ unread: true });
+    expect(
+      after.body.items.map((n: { messageId: string }) => n.messageId),
+    ).not.toContain(messageId);
+  });
+
+  it('dismisses own notifications only', async () => {    const list = await agents.carol.get('/api/v1/notifications');
     const ownId = list.body.items[0].id as string;
     expect((await agents.carol.delete(`/api/v1/notifications/${ownId}`).set(ajax)).status).toBe(
       204,

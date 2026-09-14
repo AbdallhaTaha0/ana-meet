@@ -44,9 +44,10 @@ export async function createMessageNotifications(args: {
 }): Promise<void> {
   const members = await ConversationParticipant.findAll({
     where: { conversationId: args.conversationId, userId: { [Op.ne]: args.senderId } },
-    attributes: ['userId'],
+    attributes: ['userId', 'muted'],
   });
   if (members.length === 0) return;
+  const muted = new Set(members.filter((m) => m.muted).map((m) => m.userId));
   const rows = await Notification.bulkCreate(
     members.map((m) => ({
       recipientId: m.userId,
@@ -63,6 +64,9 @@ export async function createMessageNotifications(args: {
     include: [{ model: User, as: 'actor', attributes: ['id', 'username', 'displayName', 'publicId', 'role'] }],
   });
   for (const row of full) {
+    // Muted chats stay silent but counted: the durable row exists (badges and
+    // the Updates page keep working), only the realtime push is skipped.
+    if (muted.has(row.recipientId)) continue;
     emitToUserRooms([row.recipientId], 'notification:new', { notification: toView(row) });
   }
 }

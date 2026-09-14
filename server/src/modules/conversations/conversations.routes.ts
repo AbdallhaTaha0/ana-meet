@@ -6,11 +6,15 @@ import {
   createDirect,
   createGroup,
   getById,
+  hide,
   leave,
   list,
+  mute,
   remove,
   rename,
   transfer,
+  unhide,
+  unmute,
 } from './conversations.controller';
 import {
   addMembersSchema,
@@ -46,6 +50,26 @@ conversationsRoutes.post(
   '/:id/leave',
   validate('params', conversationIdParamSchema),
   leave,
+);
+conversationsRoutes.post(
+  '/:id/hide',
+  validate('params', conversationIdParamSchema),
+  hide,
+);
+conversationsRoutes.post(
+  '/:id/unhide',
+  validate('params', conversationIdParamSchema),
+  unhide,
+);
+conversationsRoutes.post(
+  '/:id/mute',
+  validate('params', conversationIdParamSchema),
+  mute,
+);
+conversationsRoutes.post(
+  '/:id/unmute',
+  validate('params', conversationIdParamSchema),
+  unmute,
 );
 conversationsRoutes.patch(
   '/:id',

@@ -6,11 +6,15 @@ import {
   createDirectConversation,
   createGroupConversation,
   getConversationDetail,
+  hideConversation,
   leaveConversation,
   listMyConversations,
+  muteConversation,
   removeMember,
   renameGroup,
   transferOwnership,
+  unhideConversation,
+  unmuteConversation,
 } from './conversations.service';
 
 function authId(req: Request): string {
@@ -72,4 +76,28 @@ export const transfer = asyncHandler(async (req: Request, res: Response) => {
   const params = req.params as unknown as { id: string };
   const conversation = await transferOwnership(authId(req), params.id, req.body.userId as string);
   res.status(200).json({ conversation });
+});
+
+export const hide = asyncHandler(async (req: Request, res: Response) => {
+  const params = req.params as unknown as { id: string };
+  const result = await hideConversation(authId(req), params.id);
+  res.status(200).json(result);
+});
+
+export const unhide = asyncHandler(async (req: Request, res: Response) => {
+  const params = req.params as unknown as { id: string };
+  const result = await unhideConversation(authId(req), params.id);
+  res.status(200).json(result);
+});
+
+export const mute = asyncHandler(async (req: Request, res: Response) => {
+  const params = req.params as unknown as { id: string };
+  const result = await muteConversation(authId(req), params.id);
+  res.status(200).json(result);
+});
+
+export const unmute = asyncHandler(async (req: Request, res: Response) => {
+  const params = req.params as unknown as { id: string };
+  const result = await unmuteConversation(authId(req), params.id);
+  res.status(200).json(result);
 });

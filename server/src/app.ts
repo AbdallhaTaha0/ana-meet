@@ -14,6 +14,7 @@ import { adminRoutes } from './modules/admin/admin.routes';
 import { blocksRoutes } from './modules/blocks/blocks.routes';
 import { botsRoutes } from './modules/bots/bots.routes';
 import { contactsRoutes } from './modules/contacts/contacts.routes';
+import { friendRequestsRoutes } from './modules/friend-requests/friend-requests.routes';
 import { conversationsRoutes } from './modules/conversations/conversations.routes';
 import { messagesRoutes } from './modules/messages/messages.routes';
 import { notificationsRoutes } from './modules/notifications/notifications.routes';
@@ -67,6 +68,7 @@ export function createApp(): express.Express {
   app.use('/api/v1/bots', botsRoutes);
   app.use('/api/v1/users', usersRoutes);
   app.use('/api/v1/contacts', contactsRoutes);
+  app.use('/api/v1/friend-requests', friendRequestsRoutes);
   app.use('/api/v1/blocks', blocksRoutes);
   app.use('/api/v1/conversations', conversationsRoutes);
   app.use('/api/v1/conversations/:id/messages', messagesRoutes);

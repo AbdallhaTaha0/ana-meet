@@ -76,8 +76,10 @@ export function ChatPage() {
     add: thread.add,
     remove: thread.remove,
     status: thread.status,
-  });
-  const actions = useMessageActions(
+    conversationGone: () => {
+      navigate('/app/chats');
+    },
+  });  const actions = useMessageActions(
     conversationId,
     realtime.socket,
     thread.add,
@@ -98,6 +100,18 @@ export function ChatPage() {
       setError(errorMessage(cause));
     }
   }
+  // Close chat: hides it from my sidebar on every device. Membership and
+  // history stay intact — a new message (or starting the chat again) reopens it.
+  async function closeChat(id: string) {
+    try {
+      setError('');
+      await conversationsApi.hide(id);
+      await refreshList();
+      if (id === conversationId) navigate('/app/chats');
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
   return (
     <div className="grid h-full min-h-0 grid-cols-1 bg-white md:grid-cols-[minmax(260px,340px)_minmax(0,1fr)]">
       <ConversationList
@@ -107,6 +121,9 @@ export function ChatPage() {
         onSearch={setSearch}
         loading={loading}
         onNew={() => setCreating(true)}
+        onClose={(id) => {
+          void closeChat(id);
+        }}
       />
       <ThreadView
         conversationId={conversationId}
@@ -150,12 +167,18 @@ export function ChatPage() {
       {detailsOpen && thread.active && (
         <ConversationDetails
           conversation={thread.active}
+          userId={user?.id}
           onClose={() => setDetailsOpen(false)}
           onChanged={async () => {
             await thread.refresh();
             await refreshList();
           }}
           onLeave={() => {
+            setDetailsOpen(false);
+            navigate('/app/chats');
+            void refreshList();
+          }}
+          onHidden={() => {
             setDetailsOpen(false);
             navigate('/app/chats');
             void refreshList();

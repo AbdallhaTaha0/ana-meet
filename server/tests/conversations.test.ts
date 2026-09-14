@@ -327,5 +327,154 @@ describe.skipIf(!shouldRun)('conversations', () => {
         400,
       );
     });
+
+    it('closes chats from the list without touching membership', async () => {
+      // Alice closes the DM: gone from her list, untouched for Bob.
+      const hide = await agents.alice.post(`/api/v1/conversations/${directId}/hide`).set(ajax);
+      expect(hide.status).toBe(200);
+      expect(hide.body.hidden).toBe(true);
+      const aliceList = await agents.alice.get('/api/v1/conversations');
+      expect(aliceList.body.items.map((c: { id: string }) => c.id)).not.toContain(directId);
+      const bobList = await agents.bob.get('/api/v1/conversations');
+      expect(bobList.body.items.map((c: { id: string }) => c.id)).toContain(directId);
+      // Hiding is idempotent; detail stays accessible for reopening.
+      expect((await agents.alice.post(`/api/v1/conversations/${directId}/hide`).set(ajax)).status).toBe(
+        200,
+      );
+      expect((await agents.alice.get(`/api/v1/conversations/${directId}`)).status).toBe(200);
+
+      // A new message reopens the chat for everyone.
+      const sent = await agents.bob
+        .post(`/api/v1/conversations/${directId}/messages`)
+        .set(ajax)
+        .send({ type: 'TEXT', content: 'Still here?', clientMessageId: crypto.randomUUID() });
+      expect(sent.status).toBe(201);
+      const reopened = await agents.alice.get('/api/v1/conversations');
+      expect(reopened.body.items.map((c: { id: string }) => c.id)).toContain(directId);
+    });
+
+    it('reopens closed chats via explicit unhide or starting the chat', async () => {
+      await agents.alice.post(`/api/v1/conversations/${directId}/hide`).set(ajax);
+      const unhide = await agents.alice.post(`/api/v1/conversations/${directId}/unhide`).set(ajax);
+      expect(unhide.status).toBe(200);
+      expect(unhide.body.hidden).toBe(false);
+      expect(
+        (await agents.alice.get('/api/v1/conversations')).body.items.map((c: { id: string }) => c.id),
+      ).toContain(directId);
+
+      await agents.alice.post(`/api/v1/conversations/${directId}/hide`).set(ajax);
+      const viaDirect = await agents.alice.post('/api/v1/conversations/direct').set(ajax).send({
+        peerId: ids.bob,
+      });
+      expect(viaDirect.status).toBe(200);
+      expect(
+        (await agents.alice.get('/api/v1/conversations')).body.items.map((c: { id: string }) => c.id),
+      ).toContain(directId);
+    });
+
+    it('rejects hide/unhide for outsiders and bad ids', async () => {
+      expect(
+        (await agents.dave.post(`/api/v1/conversations/${directId}/hide`).set(ajax)).status,
+      ).toBe(404);
+      expect(
+        (await agents.dave.post(`/api/v1/conversations/${directId}/unhide`).set(ajax)).status,
+      ).toBe(404);
+      expect((await agents.alice.post('/api/v1/conversations/not-a-uuid/hide').set(ajax)).status).toBe(
+        400,
+      );
+      expect((await request(app).post(`/api/v1/conversations/${directId}/hide`).set(ajax)).status).toBe(
+        401,
+      );
+    });
+  });
+
+  describe('mute and unread counters', () => {
+    let muteGroupId = '';
+
+    it('mutes/unmutes idempotently and exposes muted in list and detail', async () => {
+      const group = await agents.alice.post('/api/v1/conversations/group').set(ajax).send({
+        title: 'Mute lab',
+        memberIds: [ids.bob],
+      });
+      expect(group.status).toBe(201);
+      muteGroupId = group.body.conversation.id as string;
+      expect(group.body.conversation.muted).toBe(false);
+
+      const mute = await agents.bob.post(`/api/v1/conversations/${muteGroupId}/mute`).set(ajax);
+      expect(mute.status).toBe(200);
+      expect(mute.body.muted).toBe(true);
+      expect((await agents.bob.post(`/api/v1/conversations/${muteGroupId}/mute`).set(ajax)).status).toBe(
+        200,
+      );
+
+      const list = await agents.bob.get('/api/v1/conversations');
+      const row = list.body.items.find((c: { id: string }) => c.id === muteGroupId);
+      expect(row.muted).toBe(true);
+      const detail = await agents.bob.get(`/api/v1/conversations/${muteGroupId}`);
+      expect(detail.body.conversation.muted).toBe(true);
+      // Owner unaffected.
+      expect(
+        (await agents.alice.get(`/api/v1/conversations/${muteGroupId}`)).body.conversation.muted,
+      ).toBe(false);
+
+      const unmute = await agents.bob.post(`/api/v1/conversations/${muteGroupId}/unmute`).set(ajax);
+      expect(unmute.body.muted).toBe(false);
+    });
+
+    it('counts unread messages per conversation and clears on read', async () => {
+      const sent = await agents.alice
+        .post(`/api/v1/conversations/${muteGroupId}/messages`)
+        .set(ajax)
+        .send({ type: 'TEXT', content: 'Unread me', clientMessageId: crypto.randomUUID() });
+      expect(sent.status).toBe(201);
+
+      const bobList = await agents.bob.get('/api/v1/conversations');
+      const bobRow = bobList.body.items.find((c: { id: string }) => c.id === muteGroupId);
+      expect(bobRow.unreadCount).toBeGreaterThanOrEqual(1);
+      const aliceList = await agents.alice.get('/api/v1/conversations');
+      const aliceRow = aliceList.body.items.find((c: { id: string }) => c.id === muteGroupId);
+      expect(aliceRow.unreadCount).toBe(0);
+
+      const receipt = await agents.bob
+        .post(`/api/v1/conversations/${muteGroupId}/messages/${sent.body.message.id}/status`)
+        .set(ajax)
+        .send({ status: 'READ' });
+      expect(receipt.status).toBe(200);
+      const cleared = await agents.bob.get('/api/v1/conversations');
+      expect(
+        cleared.body.items.find((c: { id: string }) => c.id === muteGroupId).unreadCount,
+      ).toBe(0);
+    });
+
+    it('still counts muted chats while staying silent', async () => {
+      await agents.bob.post(`/api/v1/conversations/${muteGroupId}/mute`).set(ajax);
+      const sent = await agents.alice
+        .post(`/api/v1/conversations/${muteGroupId}/messages`)
+        .set(ajax)
+        .send({ type: 'TEXT', content: 'Muted hello', clientMessageId: crypto.randomUUID() });
+      expect(sent.status).toBe(201);
+      // Durable row exists and counts, even though no push is emitted.
+      const unread = await agents.bob.get('/api/v1/notifications').query({ unread: true });
+      expect(unread.body.items.map((n: { messageId: string }) => n.messageId)).toContain(
+        sent.body.message.id,
+      );
+      const list = await agents.bob.get('/api/v1/conversations');
+      expect(
+        list.body.items.find((c: { id: string }) => c.id === muteGroupId).unreadCount,
+      ).toBeGreaterThanOrEqual(1);
+      await agents.bob.post(`/api/v1/conversations/${muteGroupId}/unmute`).set(ajax);
+    });
+
+    it('rejects mute/unmute for outsiders and bad ids', async () => {
+      expect(
+        (await agents.dave.post(`/api/v1/conversations/${muteGroupId}/mute`).set(ajax)).status,
+      ).toBe(404);
+      expect((await agents.alice.post('/api/v1/conversations/not-a-uuid/mute').set(ajax)).status).toBe(
+        400,
+      );
+      expect(
+        (await request(app).post(`/api/v1/conversations/${muteGroupId}/mute`).set(ajax)).status,
+      ).toBe(401);
+    });
   });
 });

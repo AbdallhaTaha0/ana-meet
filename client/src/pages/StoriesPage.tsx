@@ -1,50 +1,93 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { Plus } from 'lucide-react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { ImagePlus, X } from 'lucide-react';
 import { api, errorMessage } from '../shared/api';
 import type { Story } from '../shared/types';
 import { useAuth } from '../features/auth/AuthProvider';
 import { conversationsApi } from '../features/conversations/service';
+import { useRealtimeSocket } from '../features/realtime/RealtimeProvider';
 import { StoryCard } from '../features/stories/StoryCard';
 import { Button, ContentPage, EmptyState, ErrorNotice, PageHeader, TextField } from '../shared/ui';
 
 export function StoriesPage() {
   const { user } = useAuth();
+  const socket = useRealtimeSocket();
   const [stories, setStories] = useState<Story[]>([]);
   const [content, setContent] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const load = () =>
-    api
-      .get<{ items: Story[] }>('/api/v1/stories/feed', { params: { limit: 100 } })
-      .then(({ data }) => setStories(data.items));
+  const load = useCallback(
+    () =>
+      api
+        .get<{ items: Story[] }>('/api/v1/stories/feed', { params: { limit: 100 } })
+        .then(({ data }) => setStories(data.items)),
+    [],
+  );
   useEffect(() => {
     void load().catch((cause) => setError(errorMessage(cause)));
-  }, []);
-  async function create(event: FormEvent) {
-    event.preventDefault();
-    if (!content.trim()) return;
-    setBusy(true);
-    try {
-      await api.post('/api/v1/stories', { type: 'TEXT', content: content.trim() });
-      setContent('');
-      await load();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function upload(file: File) {
-    setBusy(true);
-    try {
-      const media = await conversationsApi.upload(file);
-      if (media.type === 'FILE') throw new Error('Stories support images and videos.');
-      await api.post('/api/v1/stories', {
-        type: media.type,
-        mediaUrl: media.url,
-        mimeType: media.mimeType,
-        sizeBytes: media.sizeBytes,
+  }, [load]);
+
+  // Live feed: insert on story:new, remove on story:deleted, refetch on reconnect.
+  useEffect(() => {
+    const onNew = ({ story }: { story: Story }) => {
+      setStories((old) => {
+        if (old.some((s) => s.id === story.id)) return old;
+        return [story, ...old].sort(
+          (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+        );
       });
+    };
+    const onDeleted = ({ storyId }: { storyId: string }) => {
+      setStories((old) => old.filter((s) => s.id !== storyId));
+    };
+    const onConnect = () => {
+      void load().catch(() => undefined);
+    };
+    socket.on('story:new', onNew);
+    socket.on('story:deleted', onDeleted);
+    socket.on('connect', onConnect);
+    return () => {
+      socket.off('story:new', onNew);
+      socket.off('story:deleted', onDeleted);
+      socket.off('connect', onConnect);
+    };
+  }, [load, socket]);
+
+  useEffect(
+    () => () => {
+      if (preview) URL.revokeObjectURL(preview);
+    },
+    [preview],
+  );
+
+  function pick(next: File | null) {
+    if (preview) URL.revokeObjectURL(preview);
+    setFile(next);
+    setPreview(next ? URL.createObjectURL(next) : null);
+  }
+
+  // One form, one story: text-only, media-only, or text + media together.
+  async function share(event: FormEvent) {
+    event.preventDefault();
+    if (!content.trim() && !file) return;
+    setBusy(true);
+    try {
+      if (!file) {
+        await api.post('/api/v1/stories', { type: 'TEXT', content: content.trim() });
+      } else {
+        const media = await conversationsApi.upload(file);
+        if (media.type === 'FILE') throw new Error('Stories support images and videos.');
+        await api.post('/api/v1/stories', {
+          type: media.type,
+          mediaUrl: media.url,
+          mimeType: media.mimeType,
+          sizeBytes: media.sizeBytes,
+          ...(content.trim() ? { content: content.trim() } : {}),
+        });
+      }
+      setContent('');
+      pick(null);
       await load();
     } catch (cause) {
       setError(
@@ -59,11 +102,12 @@ export function StoriesPage() {
   async function remove(id: string) {
     try {
       await api.delete(`/api/v1/stories/${id}`);
-      await load();
+      setStories((old) => old.filter((s) => s.id !== id));
     } catch (cause) {
       setError(errorMessage(cause));
     }
   }
+  const canShare = Boolean(content.trim() || file) && !busy;
   return (
     <ContentPage>
       <PageHeader
@@ -75,7 +119,7 @@ export function StoriesPage() {
         <h2 className="mb-4 font-bold">Share a story</h2>
         <form
           onSubmit={(event) => {
-            void create(event);
+            void share(event);
           }}
           className="grid gap-3"
         >
@@ -88,12 +132,28 @@ export function StoriesPage() {
             onChange={(event) => setContent(event.target.value)}
             placeholder="What's on your mind?"
           />
+          {preview && file && (
+            <div className="relative">
+              {file.type.startsWith('video/') ? (
+                <video className="max-h-60 w-full rounded-lg" controls src={preview} />
+              ) : (
+                <img
+                  className="max-h-60 w-full rounded-lg object-cover"
+                  src={preview}
+                  alt="Story attachment preview"
+                />
+              )}
+              <Button className="absolute right-2 top-2" onClick={() => pick(null)}>
+                <X size={16} /> Remove
+              </Button>
+            </div>
+          )}
           <div className="flex flex-wrap justify-between gap-3">
             <label
               htmlFor="story-file"
               className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line px-4 py-2.5 text-sm font-bold hover:bg-mist"
             >
-              <Plus size={17} /> Photo or video
+              <ImagePlus size={17} /> {file ? 'Change photo or video' : 'Photo or video (optional)'}
             </label>
             <input
               id="story-file"
@@ -101,12 +161,12 @@ export function StoriesPage() {
               type="file"
               accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm"
               onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) void upload(file);
+                pick(event.target.files?.[0] ?? null);
+                event.target.value = '';
               }}
             />
-            <Button primary disabled={busy || !content.trim()}>
-              Share story
+            <Button primary disabled={!canShare}>
+              {busy ? 'Sharing…' : 'Share story'}
             </Button>
           </div>
         </form>

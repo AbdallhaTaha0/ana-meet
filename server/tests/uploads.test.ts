@@ -139,8 +139,7 @@ describe.skipIf(!shouldRun)('uploads', () => {
     expect((await agents.alice.delete(`/api/v1/uploads/${key}`).set(ajax)).status).toBe(404);
   });
 
-  it('references uploads from messages end to end', async () => {
-    const up = await agents.alice.post('/api/v1/uploads').set(ajax).attach('file', PNG_1X1, 'msg.png');
+  it('references uploads from messages end to end', async () => {    const up = await agents.alice.post('/api/v1/uploads').set(ajax).attach('file', PNG_1X1, 'msg.png');
     const dm = await agents.alice.post('/api/v1/conversations/direct').set(ajax).send({
       peerId: ids.bob,
     });
@@ -161,5 +160,26 @@ describe.skipIf(!shouldRun)('uploads', () => {
     expect((await agents.bob.get(`/api/v1/uploads/${up.body.media.key}`)).status).toBe(200);
     const history = await agents.bob.get(`/api/v1/conversations/${dm.body.conversation.id}/messages`);
     expect(history.body.items[0].media.mimeType).toBe('image/png');
+  });
+
+  it('serves story-only assets to followers without a message reference', async () => {
+    const up = await agents.alice.post('/api/v1/uploads').set(ajax).attach('file', PNG_1X1, 'story.png');
+    expect(up.status).toBe(201);
+    // Bob follows Alice (sees her feed) but the asset is never sent as a message.
+    await agents.bob.post('/api/v1/contacts').set(ajax).send({ contactUserId: ids.alice });
+    const story = await agents.alice.post('/api/v1/stories').set(ajax).send({
+      type: 'IMAGE',
+      mediaUrl: up.body.media.url,
+      mimeType: up.body.media.mimeType,
+      sizeBytes: up.body.media.sizeBytes,
+    });
+    expect(story.status).toBe(201);
+
+    const feed = await agents.bob.get('/api/v1/stories/feed');
+    expect(feed.body.items.map((s: { id: string }) => s.id)).toContain(story.body.story.id);
+    // Regression: story-only assets used to 404 for viewers (message check ran first).
+    expect((await agents.bob.get(`/api/v1/uploads/${up.body.media.key}`)).status).toBe(200);
+    // Strangers still cannot read it.
+    expect((await agents.carol.get(`/api/v1/uploads/${up.body.media.key}`)).status).toBe(404);
   });
 });

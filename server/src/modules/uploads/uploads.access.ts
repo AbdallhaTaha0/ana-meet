@@ -26,10 +26,15 @@ export async function assertOwnUploadReference(ownerId: string, mediaUrl: string
 export async function assertCanReadUpload(asset: MediaAsset, userId: string, role: string): Promise<void> {
   if (role === 'ADMIN' || asset.ownerId === userId) return;
   const urlPath = getStorage().urlPathFor(asset.id);
+  // Shared via a message: any conversation member may read it.
   const message = await Message.findOne({ where: { mediaUrl: { [Op.like]: `%${urlPath}` } }, attributes: ['conversationId'] });
-  if (!message) throw Errors.notFound('File not found');
-  const member = await ConversationParticipant.findOne({ where: { conversationId: message.conversationId, userId }, attributes: ['userId'] });
-  if (member) return;
+  if (message) {
+    const member = await ConversationParticipant.findOne({ where: { conversationId: message.conversationId, userId }, attributes: ['userId'] });
+    if (member) return;
+  }
+  // Shared via an active story: followers of the owner (the feed audience)
+  // may read it. Either sharing path grants access independently — a
+  // story-only asset must not require a message reference first.
   const story = await Story.findOne({ where: { mediaUrl: { [Op.like]: `%${urlPath}` }, expiresAt: { [Op.gt]: new Date() } }, attributes: ['ownerId'] });
   if (!story) throw Errors.notFound('File not found');
   const contact = await Contact.findOne({ where: { userId, contactUserId: story.ownerId }, attributes: ['userId'] });

@@ -9,13 +9,15 @@ export interface ConversationParticipantAttributes {
   conversationId: string;
   userId: string;
   role: ParticipantRole;
+  hidden: boolean;
+  muted: boolean;
   createdAt?: Date;
   updatedAt?: Date;
 }
 
 type ParticipantCreation = Optional<
   ConversationParticipantAttributes,
-  'id' | 'role' | 'createdAt' | 'updatedAt'
+  'id' | 'role' | 'hidden' | 'muted' | 'createdAt' | 'updatedAt'
 >;
 
 export class ConversationParticipant
@@ -26,6 +28,8 @@ export class ConversationParticipant
   declare conversationId: string;
   declare userId: string;
   declare role: ParticipantRole;
+  declare hidden: boolean;
+  declare muted: boolean;
   declare readonly createdAt: Date;
   declare readonly updatedAt: Date;
 }
@@ -54,6 +58,12 @@ export function initConversationParticipant(sequelize: Sequelize): void {
         allowNull: false,
         defaultValue: 'MEMBER',
       },
+      // Close chat: hidden from this member's list only. Membership, history,
+      // and other members are untouched. Any new message reopens it.
+      hidden: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+      // Mute: no notification push for this member, but rows (and unread
+      // counters) are still recorded — WhatsApp semantics.
+      muted: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     },
     {
       sequelize,

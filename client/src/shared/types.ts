@@ -29,6 +29,8 @@ export interface Conversation {
   peer?: UserCard | null;
   memberCount: number;
   myRole: 'OWNER' | 'ADMIN' | 'MEMBER';
+  muted: boolean;
+  unreadCount: number;
   createdAt: string;
   updatedAt: string;
   participants?: Array<{ userId: string; role: string; user: UserCard | null; joinedAt: string }>;

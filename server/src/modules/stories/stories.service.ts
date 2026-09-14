@@ -2,6 +2,7 @@ import { Op } from 'sequelize';
 import { Errors } from '../../common/errors';
 import { logger } from '../../common/logger';
 import { Contact, Story, User } from '../../db/models';
+import { emitToUserRooms } from '../../realtime/bus';
 import {
   getBlockedUserIds,
   isBlockedEitherWay,
@@ -52,10 +53,11 @@ export async function createStory(ownerId: string, input: CreateStoryInput): Pro
   if (input.type !== 'TEXT') {
     await assertOwnUploadReference(ownerId, input.mediaUrl, input.mimeType, input.sizeBytes);
   }
+  const caption = input.type === 'TEXT' ? input.content : (input.content?.trim() ? input.content.trim() : null);
   const created = await Story.create({
     ownerId,
     type: input.type,
-    content: input.type === 'TEXT' ? input.content : null,
+    content: caption,
     mediaUrl: input.type === 'TEXT' ? null : input.mediaUrl,
     mimeType: input.type === 'TEXT' ? null : input.mimeType,
     sizeBytes: input.type === 'TEXT' ? null : input.sizeBytes,
@@ -63,7 +65,33 @@ export async function createStory(ownerId: string, input: CreateStoryInput): Pro
   });
   const full = await Story.findByPk(created.id, { include: [ownerInclude] });
   if (!full) throw Errors.internal();
-  return toView(full);
+  const view = toView(full);
+  // Live feed: push to owner + contacts minus blocks. Failure never fails create.
+  try {
+    const audience = await storyAudience(ownerId);
+    emitToUserRooms(audience, 'story:new', { story: view });
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'Story realtime emit failed');
+  }
+  return view;
+}
+
+async function storyAudience(ownerId: string): Promise<string[]> {
+  // Viewers of an owner's stories are the owner plus everyone who follows the
+  // owner (has the owner as a contact) — exactly the set whose feed GET would
+  // include these stories. The media read check enforces the same rule, so
+  // live events never leak to users who cannot load the asset.
+  const followers = await Contact.findAll({
+    where: { contactUserId: ownerId },
+    attributes: ['userId'],
+  });
+  const hidden = await getBlockedUserIds(ownerId);
+  const hiddenSet = new Set(hidden);
+  const ids = [ownerId];
+  for (const f of followers) {
+    if (!hiddenSet.has(f.userId) && !ids.includes(f.userId)) ids.push(f.userId);
+  }
+  return ids;
 }
 
 async function activeStoriesWhere(extra: object, limit: number, offset: number) {
@@ -106,8 +134,20 @@ export async function listUserStories(viewerId: string, ownerId: string): Promis
 
 export async function deleteStory(ownerId: string, storyId: string): Promise<void> {
   // Owner-only; anything else is 404 (no existence/ownership oracle).
+  // Capture audience before delete so removal propagates live.
+  let audience: string[] = [];
+  try {
+    audience = await storyAudience(ownerId);
+  } catch {
+    audience = [ownerId];
+  }
   const deleted = await Story.destroy({ where: { id: storyId, ownerId } });
   if (deleted === 0) throw Errors.notFound('Story not found');
+  try {
+    emitToUserRooms(audience, 'story:deleted', { storyId, ownerId });
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'Story delete emit failed');
+  }
 }
 
 // Idempotent janitor: hard-deletes expired rows in bounded batches.

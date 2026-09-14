@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react';
 import type { Socket } from 'socket.io-client';
 import { errorMessage } from '../../shared/api';
+import { useConfirm } from '../../shared/ConfirmDialog';
 import type { Message } from '../../shared/types';
 import { conversationsApi } from './service';
 
@@ -16,6 +17,7 @@ export function useMessageActions(
   const [editing, setEditing] = useState<Message | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const confirm = useConfirm();
   const pendingSend = useRef<{ content: string; replyId: string | null; id: string } | null>(null);
   useEffect(() => {
     setDraft('');
@@ -98,7 +100,14 @@ export function useMessageActions(
     }
   }
   async function remove(message: Message) {
-    if (!conversationId || !window.confirm('Delete this message?')) return;
+    if (!conversationId) return;
+    const ok = await confirm({
+      title: 'Delete message?',
+      description: 'This message will be permanently deleted for everyone in this chat.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await conversationsApi.remove(conversationId, message.id);
       removeLocal(message.id);

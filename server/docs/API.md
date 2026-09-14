@@ -130,6 +130,50 @@ accounts are listed.
 
 Idempotent `204`.
 
+## Friend Requests
+
+Message-first flow: direct conversations work without friendship. Requests are
+a separate social signal with explicit accept/reject. `REJECTED`/`CANCELLED`
+are re-requestable (row flips back to `PENDING`); blocks are separate and
+withdraw pending rows without accepting them. Accept mirrors mutual contacts
+so friends appear in the stories feed.
+
+Request: `{ id, status PENDING|ACCEPTED|REJECTED|CANCELLED, requester, addressee,
+createdAt, updatedAt }`.
+
+### `POST /api/v1/friend-requests` — auth required
+
+Body: `{ addresseeId: uuid }`. `400` self, `404` unknown/disabled,
+`403 BLOCKED` either direction. Idempotent per unordered pair (`201` created,
+`200` already pending/accepted).
+
+### `GET /api/v1/friend-requests?direction=&status=&limit=&offset=` — auth required
+
+`direction` inbound|outbound|all (default all), optional `status` filter.
+`200 { items, total, limit, offset }` newest first.
+
+### `POST /api/v1/friend-requests/:id/accept` — recipient only
+
+`200 { request }`. `404` for outsiders, `400` when no longer pending,
+`403 BLOCKED` if blocked since.
+
+### `POST /api/v1/friend-requests/:id/reject` — recipient only
+
+`PENDING → REJECTED`. Re-requestable later. `200 { request }`.
+
+### `POST /api/v1/friend-requests/:id/cancel` — sender only
+
+`PENDING → CANCELLED`. `200 { request }`.
+
+### `DELETE /api/v1/friend-requests/:id` — either party
+
+Removes the row (unfriend also removes mirrored contacts). Idempotent `204`
+for participants, `404` otherwise.
+
+Realtime: `friend-request:new {request}` and `friend-request:updated {request}`
+to both parties, `friend-request:removed {id}` on delete, plus durable
+`notification:new` for new/accepted/declined.
+
 ## Blocks
 
 Directional (`blocker → blocked`) but enforced as a two-way barrier by
@@ -158,9 +202,11 @@ requires membership — outsiders get `404` (IDOR-safe, no existence
 oracle). Member add/remove/leave/rename/transfer apply to groups only.
 
 Summaries: `{ id, type, title, peer (direct only, null when gone),
-memberCount, myRole, createdAt, updatedAt }`.
+memberCount, myRole, muted, unreadCount, createdAt, updatedAt }`.
 Details add `participants: [{ userId, role, user (card or null),
-joinedAt }]`.
+joinedAt }]` plus `muted`. `unreadCount` counts the viewer's unread MESSAGE
+notifications in that conversation (muted chats count too — mute only stops
+the push, never the record).
 
 ### `POST /api/v1/conversations/direct` — auth required
 
@@ -196,6 +242,29 @@ only; the OWNER row itself can't be removed (transfer first). `204`.
 
 Removes self. Owner-leave transfers ownership to the oldest ADMIN else
 oldest MEMBER; last-member leave deletes the conversation (`{ deleted }`).
+
+### `POST /api/v1/conversations/:id/hide` — member
+
+Closes the chat for this member only (`200 { hidden: true }`, idempotent).
+Membership, history, and other members are untouched — this is how DMs
+(which cannot be left) are removed from the sidebar, including after a
+block/unfriend/contact removal. A new message, starting the DM again, or
+`unhide` reopens it. Outsiders get `404`.
+
+### `POST /api/v1/conversations/:id/unhide` — member
+
+Reopens a closed chat (`200 { hidden: false }`, idempotent).
+
+### `POST /api/v1/conversations/:id/mute` — member
+
+Mutes the chat for this member only (`200 { muted: true }`, idempotent).
+No `notification:new` push for their incoming messages, but durable rows
+and `unreadCount` keep working — the chat stays counted, just silent.
+Message delivery (`message:new`) is unaffected.
+
+### `POST /api/v1/conversations/:id/unmute` — member
+
+Unmutes (`200 { muted: false }`, idempotent).
 
 ### `PATCH /api/v1/conversations/:id` — OWNER/ADMIN
 
@@ -273,7 +342,9 @@ media { url, mimeType, sizeBytes }|null, expiresAt, createdAt }`.
 ### `POST /api/v1/stories` — auth required
 
 TEXT: `{ type: "TEXT", content (1-500) }`. Media:
-`{ type: "IMAGE"|"VIDEO", mediaUrl, mimeType, sizeBytes }`. `201 { story }`.
+`{ type: "IMAGE"|"VIDEO", mediaUrl, mimeType, sizeBytes, content? (optional caption, max 500) }`.
+Text + attachment is a single story — clients must send one POST, never one
+for the text and one for the media. `201 { story }`.
 
 ### `GET /api/v1/stories/feed?limit=&offset=` — auth required
 
@@ -297,6 +368,11 @@ null), conversationId, messageId, readAt (null = unread), createdAt }`.
   room). No presence-gating — offline members recover the same rows via
   REST after reconnect. Creation is best-effort after commit: it can log
   but never fail a send.
+- **Viewing clears the stack**: marking a message `READ` (opening the chat)
+  also marks that recipient's notifications for the message as read;
+  accepting/rejecting/cancelling/removing a friend request clears the
+  related friend-request notifications; opening the Updates page calls
+  `read-all`. Badges are derived from `unread-count`, never local state.
 - **Read state is per-recipient and server-controlled**: foreign ids in
   `/read` are silently ignored (no oracle); dismiss is owner-only.
 - List is cursor-based, newest-first, with an `unread` filter;
@@ -451,6 +527,20 @@ fail-open when Redis is down).
 | Client →  | `typing:start/stop`| `{ conversationId }`; server emits `typing:update { conversationId, userId, typing }` to other members only (DM typing across a block is `BLOCKED`) |
 | Client →  | `presence:heartbeat` | `{}`; ack `{ ok }` — refreshes the sliding presence TTL (clients should heartbeat ~30s; without it a socket older than 60s looks offline) |
 | Client →  | `presence:get` | `{ userId }`; ack `{ userId, online }` — answers `false` across blocks (indistinguishable from offline) |
+| Server →  | `friend-request:new` | `{ request }` to requester + addressee rooms |
+| Server →  | `friend-request:updated` | `{ request }` to both parties (accept/reject/cancel/re-request) |
+| Server →  | `friend-request:removed` | `{ id }` to both parties (unfriend/delete) |
+| Server →  | `story:new` | `{ story }` to owner + contacts/followers minus blocks |
+| Server →  | `story:deleted` | `{ storyId, ownerId }` to the same audience |
+| Server →  | `conversation:new` | `{ conversationId, type }` to all members — clients refetch list/detail (source of truth stays REST) |
+| Server →  | `conversation:updated` | `{ conversationId }` to current members (rename/transfer/add/remove/leave) |
+| Server →  | `conversation:removed` | `{ conversationId }` to the removed/leaver — client redirects + refetches list |
+| Server →  | `conversation:hidden` | `{ conversationId }` to the hiding member's rooms (all devices) — client drops it from the list |
+| Server →  | `conversation:deleted` | `{ conversationId }` to the last leaver |
+| Server →  | `contact:updated` | `{}` to owner — refetch contacts |
+| Server →  | `block:updated` | `{ blockedUserId }` to blocker only (no oracle for the blocked side) |
 
 Persistence always happens in PostgreSQL before the ack/broadcast;
-offline members recover via REST history after reconnect.
+offline members recover via REST history after reconnect. Conversation payloads
+are id hints on purpose: `peer`/`myRole` are viewer-specific, so clients
+refetch the authorized detail instead of trusting a broadcast copy.

@@ -1,7 +1,8 @@
 import { Op, UniqueConstraintError } from 'sequelize';
 import { Errors } from '../../common/errors';
-import { Block, Contact, User } from '../../db/models';
+import { Block, Contact, FriendRequest, User } from '../../db/models';
 import { getSequelize } from '../../db/sequelize';
+import { emitToUserRooms } from '../../realtime/bus';
 
 export interface UserCard {
   id: string;
@@ -72,7 +73,7 @@ export async function blockUser(
   }
 
   const sequelize = getSequelize();
-  return sequelize.transaction(async (tx) => {
+  const result = await sequelize.transaction(async (tx) => {
     let created: boolean;
     try {
       const [, c] = await Block.findOrCreate({
@@ -97,6 +98,21 @@ export async function blockUser(
       },
       transaction: tx,
     });
+    // A block is not a friend decision: pending requests between the pair are
+    // withdrawn (re-requestable after unblock), never auto-accepted.
+    await FriendRequest.update(
+      { status: 'CANCELLED' },
+      {
+        where: {
+          status: 'PENDING',
+          [Op.or]: [
+            { requesterId: blockerId, addresseeId: blockedUserId },
+            { requesterId: blockedUserId, addresseeId: blockerId },
+          ],
+        },
+        transaction: tx,
+      },
+    );
     const full = await User.findByPk(blockedUserId, {
       attributes: ['id', 'username', 'displayName', 'publicId', 'role'],
       transaction: tx,
@@ -104,11 +120,16 @@ export async function blockUser(
     if (!full) throw Errors.notFound('User not found');
     return { blocked: toUserCard(full), created };
   });
+  // Multi-device sync for the blocker; the blocked side gets no oracle event.
+  emitToUserRooms([blockerId], 'block:updated', { blockedUserId });
+  emitToUserRooms([blockerId], 'contact:updated', {});
+  return result;
 }
 
 export async function unblockUser(blockerId: string, blockedUserId: string): Promise<void> {
   // Idempotent: unblocking someone who isn't blocked is a no-op.
   await Block.destroy({ where: { blockerId, blockedUserId } });
+  emitToUserRooms([blockerId], 'block:updated', { blockedUserId });
 }
 
 export async function listBlocks(

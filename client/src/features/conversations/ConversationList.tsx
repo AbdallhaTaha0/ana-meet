@@ -1,4 +1,4 @@
-import { MessageCircle, Plus, Search } from 'lucide-react';
+import { BellOff, MessageCircle, Plus, Search, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { Conversation } from '../../shared/types';
 import { Avatar, Button, EmptyState, IconButton } from '../../shared/ui';
@@ -11,6 +11,7 @@ export function ConversationList({
   onSearch,
   loading,
   onNew,
+  onClose,
 }: {
   conversations: Conversation[];
   conversationId?: string;
@@ -18,6 +19,7 @@ export function ConversationList({
   onSearch: (value: string) => void;
   loading: boolean;
   onNew: () => void;
+  onClose: (id: string) => void;
 }) {
   const filtered = conversations.filter((item) =>
     conversationName(item).toLowerCase().includes(search.toLowerCase()),
@@ -74,15 +76,31 @@ export function ConversationList({
       ) : (
         <div className="min-h-0 space-y-1 overflow-y-auto px-3">
           {filtered.map((item) => (
-            <Link
+            <div
               key={item.id}
+              className={`flex min-h-20 items-center gap-1 rounded-2xl px-2 py-2 transition hover:bg-paper ${conversationId === item.id ? 'bg-mist ring-1 ring-sea/10' : ''}`}
+            >
+            <Link
               to={`/app/chats/${item.id}`}
-              className={`flex min-h-20 items-center gap-3 rounded-2xl px-3 py-2 transition hover:bg-paper ${conversationId === item.id ? 'bg-mist ring-1 ring-sea/10' : ''}`}
+              className="flex min-w-0 flex-1 items-center gap-3 px-1"
             >
               <Avatar name={conversationName(item)} />
               <span className="min-w-0 flex-1">
-                <strong className="block truncate font-display text-[15px] font-semibold">
-                  {conversationName(item)}
+                <strong className="flex items-center gap-2 font-display text-[15px] font-semibold">
+                  <span className="block truncate">{conversationName(item)}</span>
+                  {item.unreadCount > 0 && (
+                    <span
+                      aria-label={`${item.unreadCount} unread messages`}
+                      className="grid min-h-5 min-w-5 shrink-0 place-items-center rounded-full bg-sea px-1.5 text-[11px] font-bold text-white"
+                    >
+                      {item.unreadCount > 99 ? '99+' : item.unreadCount}
+                    </span>
+                  )}
+                  {item.muted && (
+                    <span aria-label="Muted" title="Muted">
+                      <BellOff size={14} className="shrink-0 text-muted" />
+                    </span>
+                  )}
                 </strong>
                 <small className="block truncate text-xs text-muted">
                   {item.type === 'GROUP'
@@ -98,6 +116,13 @@ export function ConversationList({
                 )}
               </time>
             </Link>
+              <IconButton
+                label={`Close chat with ${conversationName(item)}`}
+                onClick={() => onClose(item.id)}
+              >
+                <X size={17} />
+              </IconButton>
+            </div>
           ))}
         </div>
       )}

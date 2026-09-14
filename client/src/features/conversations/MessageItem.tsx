@@ -1,6 +1,6 @@
 import { Check, CheckCheck } from 'lucide-react';
-import { mediaUrl } from '../../shared/api';
 import type { Message } from '../../shared/types';
+import { useObjectMedia } from '../../shared/useObjectMedia';
 
 interface Props {
   message: Message;
@@ -24,6 +24,7 @@ export function MessageItem({
   const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(
     new Date(message.createdAt),
   );
+  const media = useObjectMedia(message.media?.url);
   return (
     <article
       className={`flex max-w-[86%] flex-col gap-1 md:max-w-[75%] ${mine ? 'self-end items-end' : 'items-start'}`}
@@ -45,21 +46,26 @@ export function MessageItem({
           <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
         )}
         {message.media &&
-          (message.type === 'IMAGE' ? (
+          (media.failed ? (
+            <span className="text-xs text-muted">Attachment unavailable.</span>
+          ) : media.loading || !media.src ? (
+            <span className="text-xs text-muted">Loading attachment…</span>
+          ) : message.type === 'IMAGE' ? (
             <img
               className="max-h-80 rounded-lg"
-              src={mediaUrl(message.media.url)}
+              src={media.src}
               alt={message.media.fileName || 'Shared image'}
               loading="lazy"
             />
           ) : message.type === 'VIDEO' ? (
-            <video className="max-h-80 rounded-lg" controls src={mediaUrl(message.media.url)} />
+            <video className="max-h-80 rounded-lg" controls src={media.src} />
           ) : (
             <a
               className="text-sm text-sea underline"
-              href={mediaUrl(message.media.url)}
+              href={media.src}
               target="_blank"
               rel="noreferrer"
+              download={message.media.fileName || undefined}
             >
               {message.media.fileName || 'Download file'}
             </a>
